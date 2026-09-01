@@ -35,21 +35,37 @@ action is recorded.
 ## Repository layout
 
 ```text
+control_plane_api/       FastAPI gateway and agent-key authentication
 docs/
   architecture.md        system boundaries and authority model
   agent-protocol.md       job, message, approval, and heartbeat protocol
+  control-plane-api.md    gateway setup and endpoint lifecycle
 supabase/migrations/
   202609010001_control_plane.sql
   202609010002_frontier_hardening.sql
 supabase/tests/
   control_plane_smoke.sql
+tests/                    API and credential unit tests
 ```
+
+## API quick start
+
+```bash
+cp .env.example .env
+uv sync --group dev
+uv run pytest -q
+uv run uvicorn control_plane_api.main:app --reload
+```
+
+See [Control-Plane API](docs/control-plane-api.md) for the security boundary and
+agent workflow.
 
 ## Status
 
-The control-plane schema and protocol are the first shipped milestone. The next
-milestone applies the migration to a hosted Supabase project and exposes the
-minimal API used by the first Job Scout and Research agents.
+The schema is deployed to the hosted Supabase development project and the
+provider-neutral API gateway is implemented with passing local tests. The next
+milestone deploys the API, issues scoped keys to Job Scout and Research agents,
+and runs the first end-to-end handoff.
 
 See [architecture](docs/architecture.md), the [agent protocol](docs/agent-protocol.md),
 and the documented [frontier control-plane practices](docs/frontier-control-plane.md).

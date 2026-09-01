@@ -404,6 +404,61 @@ create trigger usage_ledger_append_only
 before update or delete on public.usage_ledger
 for each row execute function control_plane_private.prevent_event_mutation();
 
+create or replace function public.register_agent(
+  p_credential_id uuid,
+  p_key_hash text,
+  p_name text,
+  p_role text,
+  p_authority_level smallint default 1,
+  p_capabilities text[] default '{}',
+  p_max_concurrency smallint default 1,
+  p_credential_label text default 'primary',
+  p_expires_at timestamptz default null,
+  p_metadata jsonb default '{}'
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  created_agent public.agents;
+begin
+  if length(trim(p_name)) = 0 or length(trim(p_role)) = 0 then
+    raise exception 'agent name and role are required';
+  end if;
+  if p_expires_at is not null and p_expires_at <= now() then
+    raise exception 'credential expiration must be in the future';
+  end if;
+
+  insert into public.agents (
+    name, role, authority_level, capabilities, status,
+    max_concurrency, metadata, last_seen_at
+  ) values (
+    p_name, p_role, p_authority_level, p_capabilities, 'idle',
+    p_max_concurrency, p_metadata, now()
+  ) returning * into created_agent;
+
+  insert into public.agent_credentials (
+    id, agent_id, label, key_hash, expires_at
+  ) values (
+    p_credential_id, created_agent.id, p_credential_label, p_key_hash, p_expires_at
+  );
+
+  insert into public.audit_events (agent_id, event_type, payload)
+  values (
+    created_agent.id,
+    'registered',
+    jsonb_build_object('credential_id', p_credential_id, 'label', p_credential_label)
+  );
+
+  return jsonb_build_object(
+    'agent', to_jsonb(created_agent),
+    'credential_id', p_credential_id
+  );
+end;
+$$;
+
 create or replace function public.compare_and_swap_shared_state(
   p_namespace text,
   p_key text,
@@ -872,6 +927,7 @@ revoke all on public.budgets from public, anon, authenticated;
 revoke all on public.usage_ledger from public, anon, authenticated;
 revoke all on public.eval_results from public, anon, authenticated;
 revoke all on function public.reserve_budget(text, text, numeric, bigint, bigint, bigint) from public, anon, authenticated;
+revoke all on function public.register_agent(uuid, text, text, text, smallint, text[], smallint, text, timestamptz, jsonb) from public, anon, authenticated;
 revoke all on function public.compare_and_swap_shared_state(text, text, jsonb, bigint, uuid) from public, anon, authenticated;
 revoke all on function public.claim_next_work_item(uuid, integer) from public, anon, authenticated;
 revoke all on function public.requeue_expired_work_items() from public, anon, authenticated;
@@ -889,6 +945,7 @@ grant select, insert, update on public.budgets to service_role;
 grant select, insert on public.usage_ledger to service_role;
 grant select, insert on public.eval_results to service_role;
 grant execute on function public.reserve_budget(text, text, numeric, bigint, bigint, bigint) to service_role;
+grant execute on function public.register_agent(uuid, text, text, text, smallint, text[], smallint, text, timestamptz, jsonb) to service_role;
 grant execute on function public.compare_and_swap_shared_state(text, text, jsonb, bigint, uuid) to service_role;
 grant execute on function public.claim_next_work_item(uuid, integer) to service_role;
 grant execute on function public.requeue_expired_work_items() to service_role;

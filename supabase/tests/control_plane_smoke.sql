@@ -47,6 +47,36 @@ $$;
 
 do $$
 declare
+  credential_id uuid := gen_random_uuid();
+  created jsonb;
+  stored_hash text;
+begin
+  created := public.register_agent(
+    credential_id,
+    'scrypt$16384$8$1$test-salt$test-hash',
+    'registration-smoke-' || gen_random_uuid()::text,
+    'registration smoke test',
+    1::smallint,
+    array['job_search'],
+    1::smallint,
+    'smoke',
+    now() + interval '1 hour',
+    '{}'::jsonb
+  );
+
+  select key_hash into stored_hash
+  from public.agent_credentials
+  where id = credential_id;
+
+  if created->>'credential_id' <> credential_id::text
+     or stored_hash <> 'scrypt$16384$8$1$test-salt$test-hash' then
+    raise exception 'atomic agent registration failed';
+  end if;
+end;
+$$;
+
+do $$
+declare
   test_agent_id uuid;
   first_work_id uuid;
   second_work_id uuid;
