@@ -49,9 +49,17 @@ Sources:
 
 ### Least privilege and secret separation
 
-All exposed tables have RLS enabled and default grants revoked. Agent runtimes
-never receive the service-role credential. Encrypted third-party credentials
-belong in Vault or a dedicated secret manager, not state, messages, or events.
+All exposed tables have RLS plus FORCE RLS enabled and default grants revoked.
+Trigger-only helpers live in a non-exposed schema. Operational RPCs use
+`SECURITY INVOKER`, are denied to `PUBLIC`, `anon`, and `authenticated`, and are
+granted only to the server-side `service_role`. Agent runtimes never receive
+that credential; they use individually revocable keys at the control-plane API.
+Encrypted third-party credentials belong in Vault or a dedicated secret
+manager, not state, messages, or events.
+
+The database derives worker capabilities from the registered agent record. It
+does not trust a capability list supplied by a worker. Claiming also locks the
+agent row and enforces `max_concurrency` inside the same transaction.
 
 Sources:
 
@@ -63,6 +71,20 @@ Sources:
 Global and scoped control flags pause new claims or disable outbound actions.
 Budgets are modeled as hard limits, not dashboard-only metrics. A worker should
 fail closed when it cannot verify policy, approval, or budget state.
+
+### Optimistic state coordination
+
+Shared state uses compare-and-swap writes. A writer must provide the version it
+read; a stale writer receives a conflict instead of silently overwriting newer
+state. This is the durable coordination mechanism for account state, job-search
+targets, and cross-agent handoffs.
+
+## Deployment verification
+
+After migrations are applied, run `supabase/tests/control_plane_smoke.sql`. It
+rolls back all fixtures after checking RLS, function privilege mode, atomic
+claims, concurrency limits, lease fencing, compare-and-swap state, exact-payload
+approval protection, the outbound kill switch, and hard budget enforcement.
 
 ## Deliberate omissions
 

@@ -2,6 +2,10 @@ begin;
 
 create extension if not exists pgcrypto;
 
+-- Trigger helpers live outside the Data API's exposed schema.
+create schema if not exists control_plane_private;
+revoke all on schema control_plane_private from public, anon, authenticated, service_role;
+
 create type public.agent_status as enum ('offline', 'idle', 'busy', 'blocked', 'disabled');
 create type public.work_status as enum (
   'queued', 'claimed', 'running', 'waiting_approval', 'completed', 'failed', 'dead_letter', 'cancelled'
@@ -35,6 +39,8 @@ create table public.agent_credentials (
   created_at timestamptz not null default now()
 );
 
+create index agent_credentials_agent_idx on public.agent_credentials (agent_id);
+
 create table public.work_items (
   id uuid primary key default gen_random_uuid(),
   parent_id uuid references public.work_items(id) on delete set null,
@@ -65,6 +71,8 @@ create index work_items_claim_idx
   on public.work_items (priority desc, created_at)
   where status = 'queued';
 create index work_items_assignee_idx on public.work_items (assigned_to, status);
+create index work_items_parent_idx on public.work_items (parent_id) where parent_id is not null;
+create index work_items_requester_idx on public.work_items (requested_by) where requested_by is not null;
 
 create table public.messages (
   id bigint generated always as identity primary key,
@@ -79,6 +87,8 @@ create table public.messages (
 );
 
 create index messages_inbox_idx on public.messages (to_agent, read_at, created_at);
+create index messages_sender_idx on public.messages (from_agent) where from_agent is not null;
+create index messages_work_item_idx on public.messages (work_item_id) where work_item_id is not null;
 
 create table public.shared_state (
   namespace text not null,
@@ -90,6 +100,8 @@ create table public.shared_state (
   primary key (namespace, key)
 );
 
+create index shared_state_updated_by_idx on public.shared_state (updated_by) where updated_by is not null;
+
 create table public.artifacts (
   id uuid primary key default gen_random_uuid(),
   work_item_id uuid references public.work_items(id) on delete cascade,
@@ -100,6 +112,9 @@ create table public.artifacts (
   metadata jsonb not null default '{}',
   created_at timestamptz not null default now()
 );
+
+create index artifacts_work_item_idx on public.artifacts (work_item_id) where work_item_id is not null;
+create index artifacts_created_by_idx on public.artifacts (created_by) where created_by is not null;
 
 create table public.approvals (
   id uuid primary key default gen_random_uuid(),
@@ -120,6 +135,8 @@ create table public.approvals (
 create unique index one_pending_approval_per_action
   on public.approvals (work_item_id, action_type)
   where status = 'pending';
+create index approvals_work_item_idx on public.approvals (work_item_id);
+create index approvals_requester_idx on public.approvals (requested_by) where requested_by is not null;
 
 create table public.audit_events (
   id bigint generated always as identity primary key,
@@ -137,7 +154,7 @@ create table public.audit_events (
 create index audit_events_work_idx on public.audit_events (work_item_id, created_at);
 create index audit_events_agent_idx on public.audit_events (agent_id, created_at);
 
-create or replace function public.set_updated_at()
+create or replace function control_plane_private.set_updated_at()
 returns trigger
 language plpgsql
 security invoker
@@ -151,27 +168,46 @@ $$;
 
 create trigger agents_set_updated_at
 before update on public.agents
-for each row execute function public.set_updated_at();
+for each row execute function control_plane_private.set_updated_at();
 
 create trigger work_items_set_updated_at
 before update on public.work_items
-for each row execute function public.set_updated_at();
+for each row execute function control_plane_private.set_updated_at();
 
 create or replace function public.claim_next_work_item(
   p_agent_id uuid,
-  p_capabilities text[],
   p_lease_seconds integer default 900
 )
 returns public.work_items
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
   claimed public.work_items;
+  claiming_agent public.agents;
+  active_count integer;
 begin
   if p_lease_seconds < 30 or p_lease_seconds > 3600 then
     raise exception 'lease must be between 30 and 3600 seconds';
+  end if;
+
+  select * into claiming_agent
+  from public.agents
+  where id = p_agent_id
+  for update;
+
+  if not found or claiming_agent.status not in ('idle', 'busy') then
+    return null;
+  end if;
+
+  select count(*) into active_count
+  from public.work_items
+  where assigned_to = p_agent_id
+    and status in ('claimed', 'running', 'waiting_approval');
+
+  if active_count >= claiming_agent.max_concurrency then
+    return null;
   end if;
 
   select w.* into claimed
@@ -179,7 +215,7 @@ begin
   where w.status = 'queued'
     and w.available_at <= now()
     and (w.assigned_to is null or w.assigned_to = p_agent_id)
-    and w.required_capabilities <@ p_capabilities
+    and w.required_capabilities <@ claiming_agent.capabilities
   order by w.priority desc, w.created_at
   for update skip locked
   limit 1;
@@ -199,6 +235,10 @@ begin
   insert into public.audit_events (agent_id, work_item_id, event_type)
   values (p_agent_id, claimed.id, 'claimed');
 
+  update public.agents
+  set status = 'busy', last_seen_at = now()
+  where id = p_agent_id;
+
   return claimed;
 end;
 $$;
@@ -206,7 +246,7 @@ $$;
 create or replace function public.requeue_expired_work_items()
 returns integer
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
@@ -239,7 +279,38 @@ alter table public.artifacts enable row level security;
 alter table public.approvals enable row level security;
 alter table public.audit_events enable row level security;
 
-revoke all on all tables in schema public from anon, authenticated;
-revoke all on all functions in schema public from public, anon, authenticated;
+alter table public.agents force row level security;
+alter table public.agent_credentials force row level security;
+alter table public.work_items force row level security;
+alter table public.messages force row level security;
+alter table public.shared_state force row level security;
+alter table public.artifacts force row level security;
+alter table public.approvals force row level security;
+alter table public.audit_events force row level security;
+
+revoke all on all tables in schema public from public, anon, authenticated;
+revoke all on function public.claim_next_work_item(uuid, integer) from public, anon, authenticated;
+revoke all on function public.requeue_expired_work_items() from public, anon, authenticated;
+revoke all on all functions in schema control_plane_private from public, anon, authenticated, service_role;
+
+alter default privileges in schema public revoke all on tables from public, anon, authenticated;
+alter default privileges in schema public revoke all on sequences from public, anon, authenticated;
+alter default privileges in schema public revoke execute on functions from public, anon, authenticated;
+alter default privileges in schema control_plane_private revoke execute on functions from public, anon, authenticated, service_role;
+
+-- The control-plane API is the only holder of the service-role secret. Agents
+-- authenticate to that API and never receive direct database credentials.
+grant usage on schema public to service_role;
+grant select, insert, update on public.agents to service_role;
+grant select, insert, update on public.agent_credentials to service_role;
+grant select, insert, update on public.work_items to service_role;
+grant select, insert, update on public.messages to service_role;
+grant select, insert, update on public.shared_state to service_role;
+grant select, insert on public.artifacts to service_role;
+grant select, insert, update on public.approvals to service_role;
+grant select, insert on public.audit_events to service_role;
+grant usage, select on all sequences in schema public to service_role;
+grant execute on function public.claim_next_work_item(uuid, integer) to service_role;
+grant execute on function public.requeue_expired_work_items() to service_role;
 
 commit;

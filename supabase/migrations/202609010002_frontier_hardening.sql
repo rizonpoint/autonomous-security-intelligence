@@ -58,6 +58,7 @@ create index work_attempts_active_idx
   on public.work_attempts (agent_id, heartbeat_at)
   where status = 'started';
 create index work_attempts_trace_idx on public.work_attempts (trace_id, started_at);
+create index work_attempts_agent_idx on public.work_attempts (agent_id) where agent_id is not null;
 
 create table public.policy_versions (
   id uuid primary key default gen_random_uuid(),
@@ -75,7 +76,7 @@ create unique index one_active_policy_version
   on public.policy_versions (policy_name)
   where is_active;
 
-create or replace function public.hash_policy_document()
+create or replace function control_plane_private.hash_policy_document()
 returns trigger
 language plpgsql
 security invoker
@@ -89,7 +90,7 @@ $$;
 
 create trigger policy_versions_hash_document
 before insert or update of document on public.policy_versions
-for each row execute function public.hash_policy_document();
+for each row execute function control_plane_private.hash_policy_document();
 
 create table public.tool_versions (
   id uuid primary key default gen_random_uuid(),
@@ -114,7 +115,7 @@ set payload_sha256 = encode(digest(convert_to(payload::text, 'UTF8'), 'sha256'),
 alter table public.approvals
   alter column payload_sha256 set not null;
 
-create or replace function public.protect_approval_payload()
+create or replace function control_plane_private.protect_approval_payload()
 returns trigger
 language plpgsql
 security invoker
@@ -143,7 +144,7 @@ $$;
 
 create trigger approvals_protect_payload
 before insert or update on public.approvals
-for each row execute function public.protect_approval_payload();
+for each row execute function control_plane_private.protect_approval_payload();
 
 create table public.control_flags (
   scope text not null,
@@ -185,8 +186,12 @@ create table public.action_outbox (
 create index action_outbox_delivery_idx
   on public.action_outbox (next_attempt_at, created_at)
   where status in ('ready', 'failed');
+create index action_outbox_work_item_idx on public.action_outbox (work_item_id);
+create index action_outbox_attempt_idx on public.action_outbox (attempt_id) where attempt_id is not null;
+create index action_outbox_requester_idx on public.action_outbox (requested_by) where requested_by is not null;
+create index action_outbox_approval_idx on public.action_outbox (approval_id) where approval_id is not null;
 
-create or replace function public.validate_outbox_action()
+create or replace function control_plane_private.validate_outbox_action()
 returns trigger
 language plpgsql
 security invoker
@@ -256,11 +261,11 @@ $$;
 
 create trigger action_outbox_validate
 before insert or update on public.action_outbox
-for each row execute function public.validate_outbox_action();
+for each row execute function control_plane_private.validate_outbox_action();
 
 create trigger action_outbox_set_updated_at
 before update on public.action_outbox
-for each row execute function public.set_updated_at();
+for each row execute function control_plane_private.set_updated_at();
 
 create table public.budgets (
   id uuid primary key default gen_random_uuid(),
@@ -289,7 +294,7 @@ create or replace function public.reserve_budget(
 )
 returns boolean
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
@@ -346,6 +351,9 @@ create table public.usage_ledger (
 );
 
 create index usage_ledger_trace_idx on public.usage_ledger (trace_id, created_at);
+create index usage_ledger_work_item_idx on public.usage_ledger (work_item_id) where work_item_id is not null;
+create index usage_ledger_attempt_idx on public.usage_ledger (attempt_id) where attempt_id is not null;
+create index usage_ledger_agent_idx on public.usage_ledger (agent_id) where agent_id is not null;
 
 create table public.eval_results (
   id uuid primary key default gen_random_uuid(),
@@ -360,6 +368,9 @@ create table public.eval_results (
   created_at timestamptz not null default now()
 );
 
+create index eval_results_work_item_idx on public.eval_results (work_item_id) where work_item_id is not null;
+create index eval_results_attempt_idx on public.eval_results (attempt_id) where attempt_id is not null;
+
 alter table public.audit_events
   add column trace_id uuid,
   add column span_id uuid,
@@ -372,8 +383,9 @@ alter table public.audit_events
   add column redaction_applied boolean not null default false;
 
 create index audit_events_trace_idx on public.audit_events (trace_id, created_at);
+create index audit_events_attempt_idx on public.audit_events (attempt_id) where attempt_id is not null;
 
-create or replace function public.prevent_event_mutation()
+create or replace function control_plane_private.prevent_event_mutation()
 returns trigger
 language plpgsql
 security invoker
@@ -386,29 +398,99 @@ $$;
 
 create trigger audit_events_append_only
 before update or delete on public.audit_events
-for each row execute function public.prevent_event_mutation();
+for each row execute function control_plane_private.prevent_event_mutation();
 
 create trigger usage_ledger_append_only
 before update or delete on public.usage_ledger
-for each row execute function public.prevent_event_mutation();
+for each row execute function control_plane_private.prevent_event_mutation();
+
+create or replace function public.compare_and_swap_shared_state(
+  p_namespace text,
+  p_key text,
+  p_value jsonb,
+  p_expected_version bigint,
+  p_updated_by uuid default null
+)
+returns public.shared_state
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  saved public.shared_state;
+begin
+  if p_expected_version < 0 then
+    raise exception 'expected version must be zero or greater';
+  end if;
+
+  if p_expected_version = 0 then
+    insert into public.shared_state (namespace, key, value, updated_by)
+    values (p_namespace, p_key, p_value, p_updated_by)
+    on conflict (namespace, key) do nothing
+    returning * into saved;
+  else
+    update public.shared_state
+    set value = p_value,
+        version = version + 1,
+        updated_by = p_updated_by,
+        updated_at = now()
+    where namespace = p_namespace
+      and key = p_key
+      and version = p_expected_version
+    returning * into saved;
+  end if;
+
+  if saved.namespace is null then
+    raise exception 'shared state version conflict';
+  end if;
+
+  insert into public.audit_events (agent_id, event_type, payload)
+  values (
+    p_updated_by,
+    'shared_state_updated',
+    jsonb_build_object('namespace', p_namespace, 'key', p_key, 'version', saved.version)
+  );
+
+  return saved;
+end;
+$$;
 
 create or replace function public.claim_next_work_item(
   p_agent_id uuid,
-  p_capabilities text[],
   p_lease_seconds integer default 900
 )
 returns public.work_items
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
   claimed public.work_items;
+  claiming_agent public.agents;
+  active_count integer;
   new_lease_token uuid := gen_random_uuid();
   new_attempt_number integer;
 begin
   if p_lease_seconds < 30 or p_lease_seconds > 3600 then
     raise exception 'lease must be between 30 and 3600 seconds';
+  end if;
+
+  select * into claiming_agent
+  from public.agents
+  where id = p_agent_id
+  for update;
+
+  if not found or claiming_agent.status not in ('idle', 'busy') then
+    return null;
+  end if;
+
+  select count(*) into active_count
+  from public.work_items
+  where assigned_to = p_agent_id
+    and status in ('claimed', 'running', 'waiting_approval');
+
+  if active_count >= claiming_agent.max_concurrency then
+    return null;
   end if;
 
   if exists (
@@ -423,7 +505,7 @@ begin
   where w.status = 'queued'
     and w.available_at <= now()
     and (w.assigned_to is null or w.assigned_to = p_agent_id)
-    and w.required_capabilities <@ p_capabilities
+    and w.required_capabilities <@ claiming_agent.capabilities
   order by w.priority desc, w.created_at
   for update skip locked
   limit 1;
@@ -463,6 +545,10 @@ begin
     claimed.policy_version, claimed.prompt_version
   );
 
+  update public.agents
+  set status = 'busy', last_seen_at = now()
+  where id = p_agent_id;
+
   return claimed;
 end;
 $$;
@@ -470,7 +556,7 @@ $$;
 create or replace function public.requeue_expired_work_items()
 returns integer
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
@@ -509,6 +595,17 @@ begin
         available_at = now() + make_interval(secs => retry_delay_seconds)
     where id = item.id;
 
+    update public.agents
+    set status = case
+          when exists (
+            select 1 from public.work_items
+            where assigned_to = item.assigned_to
+              and status in ('claimed', 'running', 'waiting_approval')
+          ) then 'busy'::public.agent_status
+          else 'idle'::public.agent_status
+        end
+    where id = item.assigned_to;
+
     insert into public.audit_events (
       agent_id, work_item_id, trace_id, event_type, payload
     ) values (
@@ -532,7 +629,7 @@ create or replace function public.heartbeat_work_attempt(
 )
 returns timestamptz
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
@@ -577,7 +674,7 @@ create or replace function public.complete_work_attempt(
 )
 returns public.work_items
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
@@ -619,6 +716,18 @@ begin
   set status = 'succeeded', output_snapshot = p_output, ended_at = now()
   where id = active_attempt_id;
 
+  update public.agents
+  set status = case
+        when exists (
+          select 1 from public.work_items
+          where assigned_to = p_agent_id
+            and status in ('claimed', 'running', 'waiting_approval')
+        ) then 'busy'::public.agent_status
+        else 'idle'::public.agent_status
+      end,
+      last_seen_at = now()
+  where id = p_agent_id;
+
   insert into public.audit_events (
     agent_id, work_item_id, trace_id, attempt_id, event_type
   ) values (
@@ -640,7 +749,7 @@ create or replace function public.fail_work_attempt(
 )
 returns public.work_items
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
@@ -696,6 +805,18 @@ begin
   where id = p_work_item_id
   returning * into failed;
 
+  update public.agents
+  set status = case
+        when exists (
+          select 1 from public.work_items
+          where assigned_to = p_agent_id
+            and status in ('claimed', 'running', 'waiting_approval')
+        ) then 'busy'::public.agent_status
+        else 'idle'::public.agent_status
+      end,
+      last_seen_at = now()
+  where id = p_agent_id;
+
   insert into public.audit_events (
     agent_id, work_item_id, trace_id, attempt_id, event_type, payload
   ) values (
@@ -716,14 +837,46 @@ alter table public.budgets enable row level security;
 alter table public.usage_ledger enable row level security;
 alter table public.eval_results enable row level security;
 
-revoke all on public.work_attempts from anon, authenticated;
-revoke all on public.policy_versions from anon, authenticated;
-revoke all on public.tool_versions from anon, authenticated;
-revoke all on public.action_outbox from anon, authenticated;
-revoke all on public.control_flags from anon, authenticated;
-revoke all on public.budgets from anon, authenticated;
-revoke all on public.usage_ledger from anon, authenticated;
-revoke all on public.eval_results from anon, authenticated;
-revoke all on all functions in schema public from public, anon, authenticated;
+alter table public.work_attempts force row level security;
+alter table public.policy_versions force row level security;
+alter table public.tool_versions force row level security;
+alter table public.action_outbox force row level security;
+alter table public.control_flags force row level security;
+alter table public.budgets force row level security;
+alter table public.usage_ledger force row level security;
+alter table public.eval_results force row level security;
+
+revoke all on public.work_attempts from public, anon, authenticated;
+revoke all on public.policy_versions from public, anon, authenticated;
+revoke all on public.tool_versions from public, anon, authenticated;
+revoke all on public.action_outbox from public, anon, authenticated;
+revoke all on public.control_flags from public, anon, authenticated;
+revoke all on public.budgets from public, anon, authenticated;
+revoke all on public.usage_ledger from public, anon, authenticated;
+revoke all on public.eval_results from public, anon, authenticated;
+revoke all on function public.reserve_budget(text, text, numeric, bigint, bigint, bigint) from public, anon, authenticated;
+revoke all on function public.compare_and_swap_shared_state(text, text, jsonb, bigint, uuid) from public, anon, authenticated;
+revoke all on function public.claim_next_work_item(uuid, integer) from public, anon, authenticated;
+revoke all on function public.requeue_expired_work_items() from public, anon, authenticated;
+revoke all on function public.heartbeat_work_attempt(uuid, uuid, uuid, bigint, integer) from public, anon, authenticated;
+revoke all on function public.complete_work_attempt(uuid, uuid, uuid, bigint, jsonb) from public, anon, authenticated;
+revoke all on function public.fail_work_attempt(uuid, uuid, uuid, bigint, public.failure_class, jsonb, boolean) from public, anon, authenticated;
+revoke all on all functions in schema control_plane_private from public, anon, authenticated, service_role;
+
+grant select, insert, update on public.work_attempts to service_role;
+grant select, insert, update on public.policy_versions to service_role;
+grant select, insert, update on public.tool_versions to service_role;
+grant select, insert, update on public.action_outbox to service_role;
+grant select, update on public.control_flags to service_role;
+grant select, insert, update on public.budgets to service_role;
+grant select, insert on public.usage_ledger to service_role;
+grant select, insert on public.eval_results to service_role;
+grant execute on function public.reserve_budget(text, text, numeric, bigint, bigint, bigint) to service_role;
+grant execute on function public.compare_and_swap_shared_state(text, text, jsonb, bigint, uuid) to service_role;
+grant execute on function public.claim_next_work_item(uuid, integer) to service_role;
+grant execute on function public.requeue_expired_work_items() to service_role;
+grant execute on function public.heartbeat_work_attempt(uuid, uuid, uuid, bigint, integer) to service_role;
+grant execute on function public.complete_work_attempt(uuid, uuid, uuid, bigint, jsonb) to service_role;
+grant execute on function public.fail_work_attempt(uuid, uuid, uuid, bigint, public.failure_class, jsonb, boolean) to service_role;
 
 commit;

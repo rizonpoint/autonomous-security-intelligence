@@ -209,6 +209,9 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Supabase CLI local metadata
+supabase/.temp/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

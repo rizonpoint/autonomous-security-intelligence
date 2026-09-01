@@ -41,6 +41,8 @@ docs/
 supabase/migrations/
   202609010001_control_plane.sql
   202609010002_frontier_hardening.sql
+supabase/tests/
+  control_plane_smoke.sql
 ```
 
 ## Status
