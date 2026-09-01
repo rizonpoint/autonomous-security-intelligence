@@ -16,6 +16,8 @@ sharing chat history or database credentials directly.
 - approval gates for consequential actions
 - append-only audit events with latency and cost fields
 - PostgreSQL/Supabase migration with private-by-default row-level security
+- durable attempts, lease fencing, exact-payload approvals, and an action outbox
+- versioned policies/tools plus kill switches, budgets, tracing, and eval records
 
 ## Architecture
 
@@ -38,6 +40,7 @@ docs/
   agent-protocol.md       job, message, approval, and heartbeat protocol
 supabase/migrations/
   202609010001_control_plane.sql
+  202609010002_frontier_hardening.sql
 ```
 
 ## Status
@@ -46,4 +49,5 @@ The control-plane schema and protocol are the first shipped milestone. The next
 milestone applies the migration to a hosted Supabase project and exposes the
 minimal API used by the first Job Scout and Research agents.
 
-See [architecture](docs/architecture.md) and the [agent protocol](docs/agent-protocol.md).
+See [architecture](docs/architecture.md), the [agent protocol](docs/agent-protocol.md),
+and the documented [frontier control-plane practices](docs/frontier-control-plane.md).

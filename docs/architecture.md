@@ -33,6 +33,10 @@ The database is the source of truth; conversations are not.
 5. The agent completes, fails, or releases the work item.
 6. Failed work is retried up to its configured limit, then dead-lettered.
 
+Each claim creates a separate immutable attempt with a new fencing token. Any
+completion, failure, heartbeat, or external action must present the current
+token and lease version; stale workers are rejected even if they wake up later.
+
 ## Security decisions
 
 - Supabase row-level security is enabled on every public table.
@@ -40,6 +44,9 @@ The database is the source of truth; conversations are not.
 - Only the control-plane backend uses the service-role credential.
 - Agent credentials are stored as one-way SHA-256 hashes with revocation fields.
 - Approval payloads and audit events are immutable from agent-facing workflows.
+- Approved action payloads are hashed and delivered through an idempotent outbox.
+- Global kill switches disable new claims and outbound actions independently.
+- Policies, prompts, tools, and workflow versions are recorded on every run.
 - External sends, publishing, purchases, deletion, permission changes, and
   production modifications require human approval.
 

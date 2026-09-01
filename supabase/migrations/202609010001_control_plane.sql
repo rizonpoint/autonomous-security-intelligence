@@ -240,6 +240,6 @@ alter table public.approvals enable row level security;
 alter table public.audit_events enable row level security;
 
 revoke all on all tables in schema public from anon, authenticated;
-revoke all on all functions in schema public from anon, authenticated;
+revoke all on all functions in schema public from public, anon, authenticated;
 
 commit;
