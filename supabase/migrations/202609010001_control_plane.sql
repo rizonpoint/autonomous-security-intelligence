@@ -288,6 +288,23 @@ alter table public.artifacts force row level security;
 alter table public.approvals force row level security;
 alter table public.audit_events force row level security;
 
+create policy deny_direct_agent_access on public.agents
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.agent_credentials
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.work_items
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.messages
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.shared_state
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.artifacts
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.approvals
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.audit_events
+  for all to anon, authenticated using (false) with check (false);
+
 revoke all on all tables in schema public from public, anon, authenticated;
 revoke all on function public.claim_next_work_item(uuid, integer) from public, anon, authenticated;
 revoke all on function public.requeue_expired_work_items() from public, anon, authenticated;

@@ -184,7 +184,7 @@ begin
       approval_id,
       'email.send',
       '{"body": "approved"}'::jsonb,
-      encode(digest(convert_to('{"body": "approved"}'::jsonb::text, 'UTF8'), 'sha256'), 'hex'),
+      encode(extensions.digest(convert_to('{"body": "approved"}'::jsonb::text, 'UTF8'), 'sha256'), 'hex'),
       'smoke-' || gen_random_uuid()::text,
       'ready'
     );

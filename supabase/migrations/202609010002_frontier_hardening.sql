@@ -83,7 +83,7 @@ security invoker
 set search_path = ''
 as $$
 begin
-  new.document_sha256 = encode(digest(convert_to(new.document::text, 'UTF8'), 'sha256'), 'hex');
+  new.document_sha256 = encode(extensions.digest(convert_to(new.document::text, 'UTF8'), 'sha256'), 'hex');
   return new;
 end;
 $$;
@@ -110,7 +110,7 @@ alter table public.approvals
   add column payload_sha256 text;
 
 update public.approvals
-set payload_sha256 = encode(digest(convert_to(payload::text, 'UTF8'), 'sha256'), 'hex');
+set payload_sha256 = encode(extensions.digest(convert_to(payload::text, 'UTF8'), 'sha256'), 'hex');
 
 alter table public.approvals
   alter column payload_sha256 set not null;
@@ -123,7 +123,7 @@ set search_path = ''
 as $$
 begin
   if tg_op = 'INSERT' then
-    new.payload_sha256 = encode(digest(convert_to(new.payload::text, 'UTF8'), 'sha256'), 'hex');
+    new.payload_sha256 = encode(extensions.digest(convert_to(new.payload::text, 'UTF8'), 'sha256'), 'hex');
     return new;
   end if;
 
@@ -201,7 +201,7 @@ declare
   approval_record public.approvals;
   calculated_hash text;
 begin
-  calculated_hash := encode(digest(convert_to(new.payload::text, 'UTF8'), 'sha256'), 'hex');
+  calculated_hash := encode(extensions.digest(convert_to(new.payload::text, 'UTF8'), 'sha256'), 'hex');
 
   if tg_op = 'UPDATE' and (
        new.work_item_id is distinct from old.work_item_id
@@ -845,6 +845,23 @@ alter table public.control_flags force row level security;
 alter table public.budgets force row level security;
 alter table public.usage_ledger force row level security;
 alter table public.eval_results force row level security;
+
+create policy deny_direct_agent_access on public.work_attempts
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.policy_versions
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.tool_versions
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.action_outbox
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.control_flags
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.budgets
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.usage_ledger
+  for all to anon, authenticated using (false) with check (false);
+create policy deny_direct_agent_access on public.eval_results
+  for all to anon, authenticated using (false) with check (false);
 
 revoke all on public.work_attempts from public, anon, authenticated;
 revoke all on public.policy_versions from public, anon, authenticated;
