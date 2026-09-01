@@ -1,0 +1,51 @@
+# Control Plane Architecture
+
+## Goal
+
+Create one auditable coordination layer that multiple agent runtimes can use.
+The database is the source of truth; conversations are not.
+
+## Boundaries
+
+| Component | Responsibility | Trust boundary |
+|---|---|---|
+| Agent runtime | Performs one bounded role | Receives only a scoped API key |
+| Control Plane API | Authentication, authorization, validation, orchestration | Holds database service credentials |
+| Supabase/Postgres | Durable state, work queue, messages, approvals, audit | Private; never exposed with service key to agents |
+| Human approver | Resolves consequential decisions | Required for send, spend, publish, delete, permissions, production |
+
+## Authority levels
+
+| Level | Allowed behavior |
+|---|---|
+| L0 Observe | Read and research only |
+| L1 Prepare | Create internal drafts, analyses, and recommendations |
+| L2 Approval | Propose consequential actions; execution waits for approval |
+| L3 Reversible | Execute low-risk, reversible actions within a written policy |
+| L4 Bounded | Execute narrowly bounded consequential actions; not used initially |
+
+## Core flow
+
+1. An agent authenticates and sends a heartbeat.
+2. It atomically claims one compatible work item for a bounded lease.
+3. It records progress events and may message another agent.
+4. Consequential work creates an approval request instead of executing.
+5. The agent completes, fails, or releases the work item.
+6. Failed work is retried up to its configured limit, then dead-lettered.
+
+## Security decisions
+
+- Supabase row-level security is enabled on every public table.
+- No public table receives an `anon` or `authenticated` policy in v0.1.
+- Only the control-plane backend uses the service-role credential.
+- Agent credentials are stored as one-way SHA-256 hashes with revocation fields.
+- Approval payloads and audit events are immutable from agent-facing workflows.
+- External sends, publishing, purchases, deletion, permission changes, and
+  production modifications require human approval.
+
+## Why not direct agent-to-database access?
+
+Direct access would force every agent environment to hold a powerful database
+credential and would make authorization inconsistent. The API boundary gives us
+one place to enforce role permissions, input validation, rate limits, leases,
+idempotency, and audit logging.
