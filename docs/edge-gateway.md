@@ -73,6 +73,10 @@ fail-closed administration.
 
 ## Live verification
 
+The `AI OS` development deployment currently runs gateway version 4 with
+`verify_jwt = false` and custom agent/admin authentication enforced in the
+handler.
+
 ```bash
 curl --fail-with-body \
   https://<project-ref>.supabase.co/functions/v1/control-plane/health
