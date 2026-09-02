@@ -236,6 +236,9 @@ async def me(agent: Agent) -> dict[str, Any]:
 
 @app.post("/v1/work-items", status_code=status.HTTP_201_CREATED)
 async def create_work_item(body: WorkItemCreate, agent: Agent, store: Store) -> dict[str, Any]:
+    capabilities = agent.get("capabilities") or []
+    if agent.get("authority_level", 0) < 2 and "delegate" not in capabilities:
+        raise HTTPException(status_code=403, detail="agent lacks delegation authority")
     try:
         return await store.create_work_item(
             UUID(agent["workspace_id"]), UUID(agent["id"]), serialize(body)
