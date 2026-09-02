@@ -73,7 +73,7 @@ fail-closed administration.
 
 ## Live verification
 
-The `AI OS` development deployment currently runs gateway version 4 with
+The `AI OS` development deployment currently runs gateway version 5 with
 `verify_jwt = false` and custom agent/admin authentication enforced in the
 handler.
 
