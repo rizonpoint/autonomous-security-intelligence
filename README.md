@@ -52,6 +52,7 @@ docs/
   agent-protocol.md       job, message, approval, and heartbeat protocol
   control-plane-api.md    gateway setup and endpoint lifecycle
   edge-gateway.md         hosted Edge deployment and verification
+  grok-bot-runtime.md     Grok Bot worker setup and shared-computer boundary
 supabase/migrations/
   202609010001_control_plane.sql
   202609010002_frontier_hardening.sql
@@ -61,6 +62,7 @@ supabase/functions/
 supabase/tests/
   control_plane_smoke.sql
 tests/                    FastAPI and credential unit tests
+agent_runtime/            provider-neutral CLI for Grok Bot and other workers
 ```
 
 ## API quick start
