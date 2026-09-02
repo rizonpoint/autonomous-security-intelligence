@@ -358,5 +358,3 @@ async def request_approval(body: ApprovalCreate, agent: Agent, store: Store) -> 
         )
     except StoreError as exc:
         raise as_http_error(exc) from exc
-    TaskProfile,
-    Venture,
