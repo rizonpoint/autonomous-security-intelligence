@@ -92,10 +92,11 @@ agent workflow.
 
 ## Hosted status
 
-The v0.3 schema and Edge Function are deployed to the hosted Supabase
-development project. The v0.4 migration and gateway contract are implemented
-and transactionally verified, but are not described as live until deployment
-and post-deployment advisors pass. Outbound actions remain disabled.
+VentureOS v0.4 is live in the hosted `AI OS` Supabase development project. The
+venture foundation and foreign-key index migrations are recorded, the
+`control-plane` Edge Function is active as version 4 with custom agent
+authentication, the complete SQL smoke suite passes, and the Supabase security
+advisor reports zero findings. Outbound actions remain disabled.
 
 The next milestone runs the first Account Signal Intelligence revenue workflow
 through research, Red Team / QA, and commercial preparation.
