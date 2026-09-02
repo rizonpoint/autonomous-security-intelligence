@@ -51,6 +51,12 @@ interface AgentIdentity extends JsonObject {
   max_concurrency: number;
 }
 
+export function canDelegateWork(
+  agent: Pick<AgentIdentity, "authority_level" | "capabilities">,
+): boolean {
+  return agent.authority_level >= 2 || agent.capabilities.includes("delegate");
+}
+
 function requiredSlug(body: JsonObject, key = "slug"): string {
   const value = requiredString(body, key, 120);
   if (!SLUG_PATTERN.test(value)) {
@@ -668,6 +674,9 @@ async function createWorkItem(
   request: Request,
   agent: AgentIdentity,
 ): Promise<unknown> {
+  if (!canDelegateWork(agent)) {
+    throw new HttpError(403, "agent lacks delegation authority");
+  }
   const body = await parseJsonBody(request);
   const result = await databaseRequest(
     "POST",
