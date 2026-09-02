@@ -14,8 +14,6 @@ runtimes can use. The database is the source of truth; conversations are not.
 - **Client workspace:** isolated delivery, context, approvals, and budgets for
   one customer when needed.
 - **Internal workspace:** shared platform or administrative work.
-- **Personal workspace:** temporary personal workflows such as job search. It
-  cannot share queues, state, policies, budgets, or messages with a business.
 
 Every operational record carries a `workspace_id`. Composite foreign keys and
 workspace-aware RPCs reject cross-workspace references even when a caller knows

@@ -38,7 +38,7 @@ service-role key.
 ### Create the tenant boundary
 
 Use `POST /v1/admin/organizations`, then `POST /v1/admin/workspaces`, with the
-`X-Admin-Token` header. Business, client, internal, and personal workspaces are
+`X-Admin-Token` header. Business, client, and internal workspaces are
 isolated by database constraints and workspace-aware RPCs.
 
 ### Create an agent

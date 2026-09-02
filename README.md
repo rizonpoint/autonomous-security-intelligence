@@ -32,9 +32,9 @@ coordinate without sharing chat history or database credentials directly.
 ```mermaid
 flowchart TD
     OS["Autonomous Companies OS"] --> Biz["Cybersecurity Intelligence Studio"]
-    OS --> Personal["Personal Income workspace"]
+    OS --> Platform["Platform Operations"]
     Biz --> API["Control Plane API"]
-    Personal --> API
+    Platform --> API
     API --> DB["Supabase / Postgres"]
     API --> Guard["Approvals, budgets, audit"]
 ```
@@ -84,10 +84,8 @@ Supabase development project. Live verification covers workspace isolation,
 public health, protected-route denial, and fail-closed administration. Outbound
 actions remain disabled.
 
-The next milestone bootstraps the company workspace, issues scoped keys to the
-permanent business roster, and runs the first Account Signal Intelligence
-revenue workflow. Job-search agents, if used, belong only in a separate
-Personal Income workspace.
+The next milestone runs the first Account Signal Intelligence revenue workflow
+through research, Red Team / QA, and commercial preparation.
 
 See [architecture](docs/architecture.md), the [agent protocol](docs/agent-protocol.md),
 and the documented [frontier control-plane practices](docs/frontier-control-plane.md).

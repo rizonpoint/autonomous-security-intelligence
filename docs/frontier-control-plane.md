@@ -76,7 +76,7 @@ fail closed when it cannot verify policy, approval, or budget state.
 
 Shared state uses compare-and-swap writes. A writer must provide the version it
 read; a stale writer receives a conflict instead of silently overwriting newer
-state. This is the durable coordination mechanism for account state, job-search
+state. This is the durable coordination mechanism for account state, client
 targets, and cross-agent handoffs.
 
 ## Deployment verification

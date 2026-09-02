@@ -84,6 +84,3 @@ never secrets.
 | Finance / Ops | budget_monitor, revenue_tracking, operating_report | L1 |
 | Red Team / QA | fact_check, policy_check, reject_output | L2 |
 | Human Approver | resolve_approval | Human |
-
-Job Scout and related employment agents are optional temporary workers in a
-separate Personal Income workspace. They are not part of the company hierarchy.
