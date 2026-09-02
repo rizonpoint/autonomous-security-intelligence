@@ -20,9 +20,11 @@ not credential-isolation boundaries.
 
 ## Worker lifecycle
 
-Chief of Staff and other authorized agents can delegate work through the same
-scoped credential. `work-create` accepts the gateway's typed `WorkItemCreate`
-JSON contract and prints only the new work item's routing summary:
+Chief of Staff and other manager-authorized agents can delegate work through
+the same scoped credential. The gateway requires authority level 2+ or an
+explicit `delegate` capability. `work-create` accepts the gateway's typed
+`WorkItemCreate` JSON contract and prints only the new work item's routing
+summary:
 
 ```bash
 python -m agent_runtime.cli \
