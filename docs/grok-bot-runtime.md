@@ -20,6 +20,22 @@ not credential-isolation boundaries.
 
 ## Worker lifecycle
 
+Chief of Staff and other authorized agents can delegate work through the same
+scoped credential. `work-create` accepts the gateway's typed `WorkItemCreate`
+JSON contract and prints only the new work item's routing summary:
+
+```bash
+python -m agent_runtime.cli \
+  --key-file ~/.config/asi/agents/chief-of-staff.key \
+  work-create --json-file red-team-assignment.json
+```
+
+The gateway always derives `requested_by` and `workspace_id` from the caller's
+credential. A worker cannot impersonate another requester or create work in a
+different workspace by changing the JSON file.
+
+## Execution lifecycle
+
 1. Authenticate with `python -m agent_runtime.cli ... me`.
 2. Claim one compatible work item with a bounded lease. The CLI atomically
    stores the full claim beside the agent key as a mode-0600 `*.claim.json`
