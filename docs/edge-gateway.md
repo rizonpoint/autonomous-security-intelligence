@@ -81,7 +81,7 @@ curl --fail-with-body \
 Expected response:
 
 ```json
-{"status":"ok","version":"0.3.0"}
+{"status":"ok","version":"0.4.0"}
 ```
 
 Calling `/v1/me` without a credential must return HTTP 401. Calling any

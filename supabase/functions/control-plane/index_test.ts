@@ -21,7 +21,7 @@ test("health is public, cache-disabled, and correlated", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("x-request-id"), "test-request-1");
-  assert.deepEqual(await response.json(), { status: "ok", version: "0.3.0" });
+  assert.deepEqual(await response.json(), { status: "ok", version: "0.4.0" });
 });
 
 test("protected routes fail closed without an agent credential", async () => {

@@ -28,7 +28,13 @@ const FAILURE_CLASSES = new Set([
 ]);
 const MESSAGE_KINDS = new Set(["task", "result", "question", "review"]);
 const RISKS = new Set(["low", "medium", "high", "critical"]);
-const WORKSPACE_KINDS = new Set(["business", "personal", "client", "internal"]);
+const WORKSPACE_KINDS = new Set(["business", "department", "client", "internal"]);
+const VENTURE_TYPES = new Set(["operating", "client", "proof_of_concept", "sandbox"]);
+const VENTURE_STAGES = new Set([
+  "idea", "validation", "launch", "operating", "scaling", "paused", "archived",
+]);
+const ENDPOINT_CLASSES = new Set(["hosted", "dedicated", "self_hosted", "bot_runtime"]);
+const DATA_CLASSIFICATIONS = new Set(["public", "internal", "confidential", "restricted"]);
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 type JsonObject = Record<string, unknown>;
@@ -162,6 +168,27 @@ function boundedInteger(
     throw new HttpError(422, `${key} must be between ${minimum} and ${maximum}`);
   }
   return resolved as number;
+}
+
+function optionalNumber(
+  value: unknown,
+  key: string,
+  minimum = 0,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new HttpError(422, `${key} must be a number between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, key: string, maxLength: number): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.length > maxLength) {
+    throw new HttpError(422, `${key} must be a string of at most ${maxLength} characters`);
+  }
+  return value;
 }
 
 function optionalUuid(value: unknown, key: string): string | null {
@@ -435,7 +462,7 @@ async function createWorkspace(request: Request): Promise<unknown> {
   const body = await parseJsonBody(request);
   const kind = requiredString(body, "kind", 40);
   if (!WORKSPACE_KINDS.has(kind)) {
-    throw new HttpError(422, "kind must be business, personal, client, or internal");
+    throw new HttpError(422, "kind must be business, department, client, or internal");
   }
   const purpose = body.purpose;
   if (purpose !== undefined && purpose !== null &&
@@ -447,6 +474,7 @@ async function createWorkspace(request: Request): Promise<unknown> {
     "/rest/v1/workspaces",
     {
       organization_id: requiredUuid(body.organization_id, "organization_id"),
+      venture_id: optionalUuid(body.venture_id, "venture_id"),
       slug: requiredSlug(body),
       name: requiredString(body, "name", 160),
       kind,
@@ -467,9 +495,172 @@ async function listWorkspaces(request: Request, url: URL): Promise<unknown> {
   if (organizationId) {
     params.organization_id = `eq.${requiredUuid(organizationId, "organization_id")}`;
   }
+  const ventureId = url.searchParams.get("venture_id");
+  if (ventureId) {
+    params.venture_id = `eq.${requiredUuid(ventureId, "venture_id")}`;
+  }
   return await databaseRequest(
     "GET",
     `/rest/v1/workspaces?${query(params)}`,
+  );
+}
+
+async function createVenture(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  const body = await parseJsonBody(request);
+  const ventureType = typeof body.venture_type === "string" ? body.venture_type : "operating";
+  const stage = typeof body.stage === "string" ? body.stage : "validation";
+  if (!VENTURE_TYPES.has(ventureType)) throw new HttpError(422, "venture_type is invalid");
+  if (!VENTURE_STAGES.has(stage)) throw new HttpError(422, "stage is invalid");
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/ventures",
+    {
+      organization_id: requiredUuid(body.organization_id, "organization_id"),
+      slug: requiredSlug(body),
+      name: requiredString(body, "name", 160),
+      venture_type: ventureType,
+      stage,
+      thesis: optionalString(body.thesis, "thesis", 2000),
+      business_model: optionalString(body.business_model, "business_model", 1000),
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listVentures(request: Request, url: URL): Promise<unknown> {
+  requireAdmin(request);
+  const params: Record<string, string> = { select: "*", order: "created_at.asc" };
+  const organizationId = url.searchParams.get("organization_id");
+  if (organizationId) {
+    params.organization_id = `eq.${requiredUuid(organizationId, "organization_id")}`;
+  }
+  return await databaseRequest("GET", `/rest/v1/ventures?${query(params)}`);
+}
+
+async function listVentureBlueprints(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  return await databaseRequest(
+    "GET",
+    `/rest/v1/venture_blueprints?${query({
+      select: "*,venture_blueprint_versions(*)",
+      order: "created_at.asc",
+    })}`,
+  );
+}
+
+async function createModelProvider(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  const body = await parseJsonBody(request);
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/model_providers",
+    {
+      slug: requiredSlug(body),
+      name: requiredString(body, "name", 160),
+      api_family: requiredString(body, "api_family", 120),
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listModelProviders(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  return await databaseRequest(
+    "GET",
+    `/rest/v1/model_providers?${query({ select: "*", order: "created_at.asc" })}`,
+  );
+}
+
+async function createModelDeployment(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  const body = await parseJsonBody(request);
+  const endpointClass = typeof body.endpoint_class === "string" ? body.endpoint_class : "hosted";
+  if (!ENDPOINT_CLASSES.has(endpointClass)) throw new HttpError(422, "endpoint_class is invalid");
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/model_deployments",
+    {
+      provider_id: requiredUuid(body.provider_id, "provider_id"),
+      organization_id: optionalUuid(body.organization_id, "organization_id"),
+      model_key: requiredString(body, "model_key", 240),
+      display_name: requiredString(body, "display_name", 240),
+      endpoint_class: endpointClass,
+      credential_ref: optionalString(body.credential_ref, "credential_ref", 500),
+      capabilities: stringArray(body.capabilities, "capabilities"),
+      context_window_tokens: optionalNumber(body.context_window_tokens, "context_window_tokens", 1),
+      max_output_tokens: optionalNumber(body.max_output_tokens, "max_output_tokens", 1),
+      input_usd_per_million: optionalNumber(body.input_usd_per_million, "input_usd_per_million"),
+      output_usd_per_million: optionalNumber(body.output_usd_per_million, "output_usd_per_million"),
+      pricing_effective_at: optionalTimestamp(body.pricing_effective_at, "pricing_effective_at"),
+      data_residency: optionalString(body.data_residency, "data_residency", 120),
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listModelDeployments(request: Request, url: URL): Promise<unknown> {
+  requireAdmin(request);
+  const params: Record<string, string> = { select: "*", order: "created_at.asc" };
+  const organizationId = url.searchParams.get("organization_id");
+  if (organizationId) {
+    const id = requiredUuid(organizationId, "organization_id");
+    params.or = `(organization_id.is.null,organization_id.eq.${id})`;
+  }
+  return await databaseRequest("GET", `/rest/v1/model_deployments?${query(params)}`);
+}
+
+async function createTaskProfile(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  const body = await parseJsonBody(request);
+  const riskTier = typeof body.risk_tier === "string" ? body.risk_tier : "low";
+  const classification = typeof body.data_classification === "string"
+    ? body.data_classification
+    : "internal";
+  if (!RISKS.has(riskTier)) throw new HttpError(422, "risk_tier is invalid");
+  if (!DATA_CLASSIFICATIONS.has(classification)) {
+    throw new HttpError(422, "data_classification is invalid");
+  }
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/task_profiles",
+    {
+      organization_id: requiredUuid(body.organization_id, "organization_id"),
+      venture_id: optionalUuid(body.venture_id, "venture_id"),
+      slug: requiredSlug(body),
+      name: requiredString(body, "name", 160),
+      required_capabilities: stringArray(body.required_capabilities, "required_capabilities"),
+      risk_tier: riskTier,
+      minimum_quality_score: optionalNumber(body.minimum_quality_score, "minimum_quality_score", 0, 1),
+      max_latency_ms: optionalNumber(body.max_latency_ms, "max_latency_ms", 1),
+      max_cost_usd: optionalNumber(body.max_cost_usd, "max_cost_usd"),
+      max_turns: boundedInteger(body.max_turns, "max_turns", 1, 100, 8),
+      max_tool_calls: boundedInteger(body.max_tool_calls, "max_tool_calls", 0, 200, 20),
+      allowed_provider_slugs: stringArray(body.allowed_provider_slugs, "allowed_provider_slugs"),
+      allowed_model_keys: stringArray(body.allowed_model_keys, "allowed_model_keys"),
+      data_classification: classification,
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listTaskProfiles(request: Request, url: URL): Promise<unknown> {
+  requireAdmin(request);
+  const organizationId = requiredUuid(
+    url.searchParams.get("organization_id"),
+    "organization_id",
+  );
+  return await databaseRequest(
+    "GET",
+    `/rest/v1/task_profiles?${query({
+      organization_id: `eq.${organizationId}`,
+      select: "*",
+      order: "created_at.asc",
+    })}`,
   );
 }
 
@@ -739,7 +930,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const path = normalizePath(url.pathname);
 
     if (request.method === "GET" && path === "/health") {
-      return jsonResponse(200, { status: "ok", version: "0.3.0" }, id);
+      return jsonResponse(200, { status: "ok", version: "0.4.0" }, id);
     }
     if (request.method === "POST" && path === "/v1/admin/organizations") {
       return jsonResponse(201, await createOrganization(request), id);
@@ -755,6 +946,33 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
     if (request.method === "POST" && path === "/v1/admin/agents") {
       return jsonResponse(201, await createAgent(request), id);
+    }
+    if (request.method === "POST" && path === "/v1/admin/ventures") {
+      return jsonResponse(201, await createVenture(request), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/ventures") {
+      return jsonResponse(200, await listVentures(request, url), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/venture-blueprints") {
+      return jsonResponse(200, await listVentureBlueprints(request), id);
+    }
+    if (request.method === "POST" && path === "/v1/admin/model-providers") {
+      return jsonResponse(201, await createModelProvider(request), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/model-providers") {
+      return jsonResponse(200, await listModelProviders(request), id);
+    }
+    if (request.method === "POST" && path === "/v1/admin/model-deployments") {
+      return jsonResponse(201, await createModelDeployment(request), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/model-deployments") {
+      return jsonResponse(200, await listModelDeployments(request, url), id);
+    }
+    if (request.method === "POST" && path === "/v1/admin/task-profiles") {
+      return jsonResponse(201, await createTaskProfile(request), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/task-profiles") {
+      return jsonResponse(200, await listTaskProfiles(request, url), id);
     }
 
     const agent = await authenticateAgent(request);

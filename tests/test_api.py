@@ -10,6 +10,10 @@ from control_plane_api.main import app
 ORGANIZATION_ID = uuid4()
 WORKSPACE_ID = uuid4()
 AGENT_ID = uuid4()
+VENTURE_ID = uuid4()
+PROVIDER_ID = uuid4()
+DEPLOYMENT_ID = uuid4()
+TASK_PROFILE_ID = uuid4()
 
 
 def agent_identity() -> dict[str, Any]:
@@ -32,6 +36,10 @@ class FakeStore:
         self.created_work: dict[str, Any] | None = None
         self.organizations: list[dict[str, Any]] = []
         self.workspaces: list[dict[str, Any]] = []
+        self.ventures: list[dict[str, Any]] = []
+        self.model_providers: list[dict[str, Any]] = []
+        self.model_deployments: list[dict[str, Any]] = []
+        self.task_profiles: list[dict[str, Any]] = []
 
     async def register_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.registration_payload = payload
@@ -76,6 +84,53 @@ class FakeStore:
             workspace for workspace in self.workspaces
             if workspace["organization_id"] == str(organization_id)
         ]
+
+    async def create_venture(self, payload: dict[str, Any]) -> dict[str, Any]:
+        venture = {"id": str(VENTURE_ID), "status": "active", **payload}
+        self.ventures.append(venture)
+        return venture
+
+    async def list_ventures(self, organization_id: UUID | None) -> list[dict[str, Any]]:
+        if organization_id is None:
+            return self.ventures
+        return [v for v in self.ventures if v["organization_id"] == str(organization_id)]
+
+    async def list_venture_blueprints(self) -> list[dict[str, Any]]:
+        return [{"slug": "lean-b2b-service", "status": "active"}]
+
+    async def create_model_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        provider = {"id": str(PROVIDER_ID), "status": "active", **payload}
+        self.model_providers.append(provider)
+        return provider
+
+    async def list_model_providers(self) -> list[dict[str, Any]]:
+        return self.model_providers
+
+    async def create_model_deployment(self, payload: dict[str, Any]) -> dict[str, Any]:
+        deployment = {"id": str(DEPLOYMENT_ID), "status": "active", **payload}
+        self.model_deployments.append(deployment)
+        return deployment
+
+    async def list_model_deployments(self, organization_id: UUID | None) -> list[dict[str, Any]]:
+        return self.model_deployments
+
+    async def create_task_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile = {
+            "id": str(TASK_PROFILE_ID),
+            "status": "active",
+            "risk_tier": "low",
+            "max_turns": 8,
+            "max_tool_calls": 20,
+            "allowed_provider_slugs": [],
+            "allowed_model_keys": [],
+            "data_classification": "internal",
+            **payload,
+        }
+        self.task_profiles.append(profile)
+        return profile
+
+    async def list_task_profiles(self, organization_id: UUID) -> list[dict[str, Any]]:
+        return self.task_profiles
 
     async def create_work_item(
         self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
@@ -193,6 +248,63 @@ async def test_admin_creates_business_organization_and_workspace() -> None:
         assert workspace.status_code == 201, workspace.text
         assert workspace.json()["organization_id"] == str(ORGANIZATION_ID)
         assert len(store.workspaces) == 1
+    finally:
+        await client.aclose()
+        clear_overrides()
+
+
+async def test_admin_creates_venture_and_model_routing_catalog() -> None:
+    client, store = make_client()
+    try:
+        venture = await client.post(
+            "/v1/admin/ventures",
+            json={
+                "organization_id": str(ORGANIZATION_ID),
+                "slug": "cybersecurity-studio",
+                "name": "Cybersecurity Studio",
+                "venture_type": "proof_of_concept",
+                "stage": "validation",
+            },
+        )
+        assert venture.status_code == 201, venture.text
+        assert venture.json()["id"] == str(VENTURE_ID)
+
+        provider = await client.post(
+            "/v1/admin/model-providers",
+            json={"slug": "provider-a", "name": "Provider A", "api_family": "responses"},
+        )
+        assert provider.status_code == 201, provider.text
+
+        deployment = await client.post(
+            "/v1/admin/model-deployments",
+            json={
+                "provider_id": str(PROVIDER_ID),
+                "model_key": "model-a",
+                "display_name": "Model A",
+                "capabilities": ["research"],
+                "input_usd_per_million": 1.0,
+                "output_usd_per_million": 2.0,
+            },
+        )
+        assert deployment.status_code == 201, deployment.text
+
+        profile = await client.post(
+            "/v1/admin/task-profiles",
+            json={
+                "organization_id": str(ORGANIZATION_ID),
+                "venture_id": str(VENTURE_ID),
+                "slug": "evidence-research",
+                "name": "Evidence Research",
+                "required_capabilities": ["research"],
+                "minimum_quality_score": 0.85,
+                "max_cost_usd": 0.50,
+            },
+        )
+        assert profile.status_code == 201, profile.text
+        assert len(store.ventures) == 1
+        assert len(store.model_providers) == 1
+        assert len(store.model_deployments) == 1
+        assert len(store.task_profiles) == 1
     finally:
         await client.aclose()
         clear_overrides()

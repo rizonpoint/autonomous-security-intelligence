@@ -42,6 +42,19 @@ Trace, span, work-item, attempt, model, tool, policy, and prompt versions are
 recorded separately. This supports debugging, replay, regression evaluation,
 cost analysis, and model/provider comparisons.
 
+### Eval-driven, cost-bounded model routing
+
+Agent identity is independent of provider and model. Task profiles declare the
+minimum quality, latency, privacy, capability, tool-use, and cost requirements.
+Routing policies score only eligible deployments and persist the complete
+candidate snapshot and selection reason. Historical evals can change future
+ranking without rewriting an agent's role or credential.
+
+Estimated model spend is reserved atomically before a call. The reservation is
+settled against actual cost, expired when unused, and rejected when it would
+cross the hard limit. This prevents concurrent workers from each believing the
+same remaining budget is available.
+
 Sources:
 
 - https://openai.github.io/openai-agents-python/tracing/
@@ -82,7 +95,8 @@ targets, and cross-agent handoffs.
 ## Deployment verification
 
 After migrations are applied, run `supabase/tests/control_plane_smoke.sql`. It
-rolls back all fixtures after checking RLS, function privilege mode, atomic
+rolls back all fixtures after checking RLS, function privilege mode, tenant and
+venture isolation, model budget reservations, atomic
 claims, concurrency limits, lease fencing, compare-and-swap state, exact-payload
 approval protection, the outbound kill switch, and hard budget enforcement.
 

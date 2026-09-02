@@ -1,6 +1,6 @@
 # Grok Bot Runtime
 
-Grok Bot can operate as a provider runtime for Autonomous Companies OS. The Bot
+Grok Bot can operate as one provider runtime for VentureOS. The Bot
 uses its persistent cloud computer to run the repository's scoped worker CLI;
 it never receives a Supabase key or the control-plane administrator token.
 

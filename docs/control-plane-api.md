@@ -9,7 +9,7 @@ password or service-role key.
 ## Security boundary
 
 1. The server holds `SUPABASE_SERVICE_ROLE_KEY` in its secret environment.
-2. An administrator creates an organization and workspace using
+2. An administrator creates an organization, venture, and workspace using
    `CONTROL_PLANE_ADMIN_TOKEN`.
 3. The administrator creates an agent inside that workspace.
 4. The API returns one plaintext key in the form `asi.<credential-id>.<secret>`.
@@ -37,9 +37,28 @@ service-role key.
 
 ### Create the tenant boundary
 
-Use `POST /v1/admin/organizations`, then `POST /v1/admin/workspaces`, with the
-`X-Admin-Token` header. Business, client, and internal workspaces are
-isolated by database constraints and workspace-aware RPCs.
+Use `POST /v1/admin/organizations`, then `POST /v1/admin/ventures`, then
+`POST /v1/admin/workspaces`, with the `X-Admin-Token` header. Department,
+client, and internal workspaces are isolated by database constraints and
+workspace-aware RPCs. Existing `business` is retained only as a legacy root
+workspace kind.
+
+`GET /v1/admin/venture-blueprints` returns versioned reusable operating plans.
+Blueprints describe departments, roles, and controls; they never manufacture
+plaintext credentials inside the database.
+
+### Configure provider-neutral routing
+
+- `POST/GET /v1/admin/model-providers` manages provider identities.
+- `POST/GET /v1/admin/model-deployments` manages concrete models or Bot
+  runtimes, capabilities, price snapshots, and secret references.
+- `POST/GET /v1/admin/task-profiles` defines quality, latency, cost, risk,
+  privacy, turn, and tool-call bounds for a class of work.
+
+Routing policies and decisions are durable database records. A model call must
+reserve estimated spend against the relevant budget before execution and settle
+actual spend afterward. Provider secrets remain server-side; `credential_ref`
+is only an opaque secret-manager reference.
 
 ### Create an agent
 

@@ -191,6 +191,68 @@ class SupabaseStore:
             params["organization_id"] = f"eq.{organization_id}"
         return await self._request("GET", "/rest/v1/workspaces", params=params) or []
 
+    async def create_venture(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._request(
+            "POST", "/rest/v1/ventures", json=payload, prefer="return=representation"
+        )
+        return self._one(result) or {}
+
+    async def list_ventures(self, organization_id: UUID | None) -> list[dict[str, Any]]:
+        params = {"select": "*", "order": "created_at.asc"}
+        if organization_id is not None:
+            params["organization_id"] = f"eq.{organization_id}"
+        return await self._request("GET", "/rest/v1/ventures", params=params) or []
+
+    async def list_venture_blueprints(self) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET",
+            "/rest/v1/venture_blueprints",
+            params={"select": "*,venture_blueprint_versions(*)", "order": "created_at.asc"},
+        ) or []
+
+    async def create_model_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._request(
+            "POST", "/rest/v1/model_providers", json=payload,
+            prefer="return=representation"
+        )
+        return self._one(result) or {}
+
+    async def list_model_providers(self) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET", "/rest/v1/model_providers",
+            params={"select": "*", "order": "created_at.asc"},
+        ) or []
+
+    async def create_model_deployment(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._request(
+            "POST", "/rest/v1/model_deployments", json=payload,
+            prefer="return=representation"
+        )
+        return self._one(result) or {}
+
+    async def list_model_deployments(self, organization_id: UUID | None) -> list[dict[str, Any]]:
+        params = {"select": "*", "order": "created_at.asc"}
+        if organization_id is not None:
+            params["or"] = f"(organization_id.is.null,organization_id.eq.{organization_id})"
+        return await self._request("GET", "/rest/v1/model_deployments", params=params) or []
+
+    async def create_task_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._request(
+            "POST", "/rest/v1/task_profiles", json=payload,
+            prefer="return=representation"
+        )
+        return self._one(result) or {}
+
+    async def list_task_profiles(self, organization_id: UUID) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET", "/rest/v1/task_profiles",
+            params={
+                "organization_id": f"eq.{organization_id}",
+                "select": "*",
+                "order": "created_at.asc",
+            },
+        ) or []
+
     async def create_work_item(
         self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
     ) -> dict[str, Any]:
