@@ -225,6 +225,25 @@ async def test_create_and_claim_work() -> None:
         clear_overrides()
 
 
+async def test_worker_without_delegation_authority_cannot_create_work() -> None:
+    client, store = make_client()
+    worker = agent_identity()
+    worker["authority_level"] = 1
+    worker["capabilities"] = ["market_research"]
+    app.dependency_overrides[current_agent] = lambda: worker
+    try:
+        response = await client.post(
+            "/v1/work-items",
+            json={"work_type": "review", "title": "Create unauthorized work"},
+        )
+        assert response.status_code == 403
+        assert response.json() == {"detail": "agent lacks delegation authority"}
+        assert store.created_work is None
+    finally:
+        await client.aclose()
+        clear_overrides()
+
+
 async def test_admin_creates_business_organization_and_workspace() -> None:
     client, store = make_client()
     try:
