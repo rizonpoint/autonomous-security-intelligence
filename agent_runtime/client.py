@@ -104,6 +104,9 @@ class ControlPlaneClient:
     def me(self) -> dict[str, Any]:
         return self._request("GET", "/v1/me")
 
+    def create_work_item(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/v1/work-items", payload)
+
     def claim(self, lease_seconds: int = 900) -> dict[str, Any] | None:
         return self._request(
             "POST", "/v1/work-items/claim", {"lease_seconds": lease_seconds}
