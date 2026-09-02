@@ -11,6 +11,7 @@ from agent_runtime.cli import (
     default_claim_file,
     lease_fields,
     sanitized_claim,
+    sanitized_work_item,
     write_private_json,
 )
 from agent_runtime.client import ControlPlaneClient, ControlPlaneError, load_agent_key
@@ -63,6 +64,47 @@ def test_claim_uses_bearer_auth_without_returning_key() -> None:
     assert captured["authorization"] == f"Bearer {TEST_KEY}"
     assert captured["body"] == {"lease_seconds": 120}
     assert TEST_KEY not in json.dumps(result)
+
+
+def test_create_work_item_uses_scoped_agent_and_sanitizes_result() -> None:
+    captured = {}
+
+    def opener(request, **_: object):
+        captured["authorization"] = request.headers["Authorization"]
+        captured["path"] = request.full_url
+        captured["body"] = json.loads(request.data)
+        return FakeResponse(
+            {
+                "id": "work-2",
+                "title": "Red Team the ICP",
+                "status": "queued",
+                "assigned_to": "red-team-agent",
+                "queue": "red-team-qa",
+                "trace_id": "trace-2",
+                "input": {"private_context": "not printed"},
+            }
+        )
+
+    payload = {
+        "work_type": "red_team_review",
+        "title": "Red Team the ICP",
+        "assigned_to": "red-team-agent",
+    }
+    client = ControlPlaneClient(TEST_KEY, opener=opener)
+    result = sanitized_work_item(client.create_work_item(payload))
+
+    assert captured["authorization"] == f"Bearer {TEST_KEY}"
+    assert captured["path"].endswith("/v1/work-items")
+    assert captured["body"] == payload
+    assert result == {
+        "work_id": "work-2",
+        "title": "Red Team the ICP",
+        "status": "queued",
+        "assigned_to": "red-team-agent",
+        "queue": "red-team-qa",
+        "trace_id": "trace-2",
+    }
+    assert "private_context" not in json.dumps(result)
 
 
 def test_http_errors_are_sanitized() -> None:
