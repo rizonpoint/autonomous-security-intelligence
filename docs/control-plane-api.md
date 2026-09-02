@@ -1,8 +1,10 @@
 # Control-Plane API
 
-The FastAPI gateway is the only supported path from an agent runtime to the
-Supabase control plane. Grok Bot, Codex, and future workers never receive a
-Supabase database password or service-role key.
+The control-plane gateway is the only supported path from an agent runtime to
+Supabase. The portable implementation uses FastAPI; the first hosted adapter
+uses a Supabase Edge Function. Both preserve the same authentication and work
+lifecycle. Grok Bot, Codex, and future workers never receive a Supabase database
+password or service-role key.
 
 ## Security boundary
 
@@ -78,3 +80,12 @@ Database behavior is verified separately by
 `supabase/tests/control_plane_smoke.sql`. It runs in a transaction and rolls
 back its fixtures.
 
+The Edge adapter is verified with:
+
+```bash
+node --experimental-strip-types --test \
+  supabase/functions/control-plane/security_test.ts \
+  supabase/functions/control-plane/index_test.ts
+```
+
+See [Hosted Edge Gateway](edge-gateway.md) for deployment and live probes.

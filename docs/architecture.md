@@ -42,7 +42,8 @@ token and lease version; stale workers are rejected even if they wake up later.
 - Supabase row-level security is enabled on every public table.
 - No public table receives an `anon` or `authenticated` policy in v0.1.
 - Only the control-plane backend uses the service-role credential.
-- Agent credentials are stored as one-way SHA-256 hashes with revocation fields.
+- Agent credentials are stored as bounded, salted `scrypt` hashes with
+  credential-scoped expiration and revocation fields.
 - Approval payloads and audit events are immutable from agent-facing workflows.
 - Approved action payloads are hashed and delivered through an idempotent outbox.
 - Global kill switches disable new claims and outbound actions independently.
