@@ -2,8 +2,24 @@
 
 ## Goal
 
-Create one auditable coordination layer that multiple agent runtimes can use.
-The database is the source of truth; conversations are not.
+Create one auditable coordination layer that multiple businesses and agent
+runtimes can use. The database is the source of truth; conversations are not.
+
+## Organization and workspace model
+
+- **Organization:** Autonomous Companies, the durable platform and ownership
+  boundary.
+- **Business workspace:** one operating company or venture, beginning with the
+  Autonomous Cybersecurity Intelligence Studio.
+- **Client workspace:** isolated delivery, context, approvals, and budgets for
+  one customer when needed.
+- **Internal workspace:** shared platform or administrative work.
+- **Personal workspace:** temporary personal workflows such as job search. It
+  cannot share queues, state, policies, budgets, or messages with a business.
+
+Every operational record carries a `workspace_id`. Composite foreign keys and
+workspace-aware RPCs reject cross-workspace references even when a caller knows
+another record's UUID. Agent workspace assignment is immutable.
 
 ## Boundaries
 
@@ -46,7 +62,8 @@ token and lease version; stale workers are rejected even if they wake up later.
   credential-scoped expiration and revocation fields.
 - Approval payloads and audit events are immutable from agent-facing workflows.
 - Approved action payloads are hashed and delivered through an idempotent outbox.
-- Global kill switches disable new claims and outbound actions independently.
+- Global and workspace-scoped kill switches disable new claims and outbound
+  actions independently.
 - Policies, prompts, tools, and workflow versions are recorded on every run.
 - External sends, publishing, purchases, deletion, permission changes, and
   production modifications require human approval.

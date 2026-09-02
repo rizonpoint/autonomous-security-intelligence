@@ -9,11 +9,13 @@ password or service-role key.
 ## Security boundary
 
 1. The server holds `SUPABASE_SERVICE_ROLE_KEY` in its secret environment.
-2. An administrator creates an agent using `CONTROL_PLANE_ADMIN_TOKEN`.
-3. The API returns one plaintext key in the form `asi.<credential-id>.<secret>`.
-4. Only a salted `scrypt` hash is stored in `agent_credentials`.
-5. Every agent request uses its own bearer key.
-6. A key can be expired or revoked without affecting other agents.
+2. An administrator creates an organization and workspace using
+   `CONTROL_PLANE_ADMIN_TOKEN`.
+3. The administrator creates an agent inside that workspace.
+4. The API returns one plaintext key in the form `asi.<credential-id>.<secret>`.
+5. Only a salted `scrypt` hash is stored in `agent_credentials`.
+6. Every agent request uses its own bearer key.
+7. A key can be expired or revoked without affecting other agents.
 
 The public Supabase roles have explicit deny-all RLS policies. Operational RPCs
 use `SECURITY INVOKER` and are executable only by `service_role`.
@@ -33,10 +35,17 @@ service-role key.
 
 ## Core lifecycle
 
+### Create the tenant boundary
+
+Use `POST /v1/admin/organizations`, then `POST /v1/admin/workspaces`, with the
+`X-Admin-Token` header. Business, client, internal, and personal workspaces are
+isolated by database constraints and workspace-aware RPCs.
+
 ### Create an agent
 
 `POST /v1/admin/agents` with the `X-Admin-Token` header. The response displays
-the agent key once. Store it in that worker's scoped secret manager.
+the agent key once. The request must include `workspace_id`. Store the returned
+key in that worker's scoped secret manager.
 
 ### Authenticate
 

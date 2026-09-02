@@ -1,10 +1,14 @@
-# Agent Protocol v0.1
+# Agent Protocol v0.3
 
 ## Identity
 
-Every worker has a stable `agent_id`, role, authority level, capability list,
-and individually revocable API credential. Human operators are represented
-separately in approval resolution metadata.
+Every worker has a stable `agent_id`, immutable `workspace_id`, role, authority
+level, capability list, and individually revocable API credential. Human
+operators are represented separately in approval resolution metadata.
+
+An agent may operate only inside its registered workspace. It cannot claim,
+read, message, update state, request approval, or consume budget across a
+workspace boundary.
 
 ## Work-item lifecycle
 
@@ -42,9 +46,9 @@ allowed only for system notifications.
 
 ## Shared state
 
-State uses `(namespace, key)` plus an integer version. Updates are compare-and-
-swap operations: a writer supplies the version it read, preventing silent
-overwrites. Examples include `accounts/acme`, `job_search/daily_targets`, and
+State uses `(workspace_id, namespace, key)` plus an integer version. Updates are
+compare-and-swap operations: a writer supplies the version it read, preventing
+silent overwrites. Examples include `accounts/acme`, `delivery/client-a`, and
 `company/operating_policy`.
 
 ## Approval contract
@@ -67,13 +71,19 @@ Agents emit events for `registered`, `heartbeat`, `claimed`, `started`,
 `released`. Tool events may include latency, token use, and estimated cost, but
 never secrets.
 
-## First agent roles
+## Permanent business roster
 
 | Agent | Capabilities | Starting authority |
 |---|---|---:|
-| Job Scout | job_search, verify_listing, rank_role | L1 |
-| Application Researcher | company_research, people_research | L1 |
-| Business Development | prospect_research, qualify_account | L1 |
-| Proposal Builder | scope_workflow, draft_proposal | L1 |
-| QA / Red Team | fact_check, policy_check, reject_output | L1 |
+| Chief of Staff / CEO | orchestrate, prioritize, delegate, escalate | L2 |
+| Market Intelligence | market_research, signal_detection, account_research | L1 |
+| Prospecting | prospect_research, qualify_account, contact_research | L1 |
+| Sales | discovery_prep, draft_outreach, draft_proposal | L2 |
+| Delivery | produce_brief, analyze_signals, build_artifact | L1 |
+| Customer Success | client_health, renewal_prep, feedback_synthesis | L1 |
+| Finance / Ops | budget_monitor, revenue_tracking, operating_report | L1 |
+| Red Team / QA | fact_check, policy_check, reject_output | L2 |
 | Human Approver | resolve_approval | Human |
+
+Job Scout and related employment agents are optional temporary workers in a
+separate Personal Income workspace. They are not part of the company hierarchy.

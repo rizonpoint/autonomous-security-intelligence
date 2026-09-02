@@ -28,17 +28,29 @@ const FAILURE_CLASSES = new Set([
 ]);
 const MESSAGE_KINDS = new Set(["task", "result", "question", "review"]);
 const RISKS = new Set(["low", "medium", "high", "critical"]);
+const WORKSPACE_KINDS = new Set(["business", "personal", "client", "internal"]);
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 type JsonObject = Record<string, unknown>;
 
 interface AgentIdentity extends JsonObject {
   id: string;
+  workspace_id: string;
+  organization_id: string;
   name: string;
   role: string;
   authority_level: number;
   capabilities: string[];
   status: string;
   max_concurrency: number;
+}
+
+function requiredSlug(body: JsonObject, key = "slug"): string {
+  const value = requiredString(body, key, 120);
+  if (!SLUG_PATTERN.test(value)) {
+    throw new HttpError(422, `${key} must be a lowercase hyphenated slug`);
+  }
+  return value;
 }
 
 class HttpError extends Error {
@@ -270,7 +282,7 @@ async function authenticateAgent(request: Request): Promise<AgentIdentity> {
     "GET",
     `/rest/v1/agent_credentials?${query({
       id: `eq.${parsed.credentialId}`,
-      select: "id,agent_id,key_hash,expires_at,revoked_at",
+      select: "id,workspace_id,agent_id,key_hash,expires_at,revoked_at",
       limit: "1",
     })}`,
   );
@@ -294,7 +306,9 @@ async function authenticateAgent(request: Request): Promise<AgentIdentity> {
     "GET",
     `/rest/v1/agents?${query({
       id: `eq.${String(credential.agent_id)}`,
-      select: "id,name,role,authority_level,capabilities,status,max_concurrency",
+      workspace_id: `eq.${String(credential.workspace_id)}`,
+      select:
+        "id,workspace_id,name,role,authority_level,capabilities,status,max_concurrency",
       limit: "1",
     })}`,
   );
@@ -302,6 +316,30 @@ async function authenticateAgent(request: Request): Promise<AgentIdentity> {
   if (!agent || agent.status === "disabled") {
     throw new HttpError(403, "agent is disabled");
   }
+
+  const workspace = one(await databaseRequest(
+    "GET",
+    `/rest/v1/workspaces?${query({
+      id: `eq.${agent.workspace_id}`,
+      select: "id,organization_id,status",
+      limit: "1",
+    })}`,
+  ));
+  if (!workspace || workspace.status !== "active") {
+    throw new HttpError(403, "agent workspace is unavailable");
+  }
+  const organization = one(await databaseRequest(
+    "GET",
+    `/rest/v1/organizations?${query({
+      id: `eq.${String(workspace.organization_id)}`,
+      select: "id,status",
+      limit: "1",
+    })}`,
+  ));
+  if (!organization || organization.status !== "active") {
+    throw new HttpError(403, "agent organization is unavailable");
+  }
+  agent.organization_id = String(organization.id);
 
   const now = new Date().toISOString();
   await Promise.all([
@@ -334,6 +372,7 @@ async function createAgent(request: Request): Promise<unknown> {
   const role = requiredString(body, "role", 240);
   const issued = issueAgentKey();
   const result = one(await rpc("register_agent", {
+    p_workspace_id: requiredUuid(body.workspace_id, "workspace_id"),
     p_credential_id: issued.credentialId,
     p_key_hash: issued.encodedHash,
     p_name: name,
@@ -368,6 +407,72 @@ async function createAgent(request: Request): Promise<unknown> {
   };
 }
 
+async function createOrganization(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  const body = await parseJsonBody(request);
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/organizations",
+    {
+      slug: requiredSlug(body),
+      name: requiredString(body, "name", 160),
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listOrganizations(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  return await databaseRequest(
+    "GET",
+    `/rest/v1/organizations?${query({ select: "*", order: "created_at.asc" })}`,
+  );
+}
+
+async function createWorkspace(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  const body = await parseJsonBody(request);
+  const kind = requiredString(body, "kind", 40);
+  if (!WORKSPACE_KINDS.has(kind)) {
+    throw new HttpError(422, "kind must be business, personal, client, or internal");
+  }
+  const purpose = body.purpose;
+  if (purpose !== undefined && purpose !== null &&
+    (typeof purpose !== "string" || purpose.length > 1000)) {
+    throw new HttpError(422, "purpose must be a string of at most 1000 characters");
+  }
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/workspaces",
+    {
+      organization_id: requiredUuid(body.organization_id, "organization_id"),
+      slug: requiredSlug(body),
+      name: requiredString(body, "name", 160),
+      kind,
+      purpose: purpose ?? null,
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listWorkspaces(request: Request, url: URL): Promise<unknown> {
+  requireAdmin(request);
+  const params: Record<string, string> = {
+    select: "*",
+    order: "created_at.asc",
+  };
+  const organizationId = url.searchParams.get("organization_id");
+  if (organizationId) {
+    params.organization_id = `eq.${requiredUuid(organizationId, "organization_id")}`;
+  }
+  return await databaseRequest(
+    "GET",
+    `/rest/v1/workspaces?${query(params)}`,
+  );
+}
+
 async function createWorkItem(
   request: Request,
   agent: AgentIdentity,
@@ -377,6 +482,7 @@ async function createWorkItem(
     "POST",
     "/rest/v1/work_items",
     {
+      workspace_id: agent.workspace_id,
       requested_by: agent.id,
       work_type: requiredString(body, "work_type", 120),
       title: requiredString(body, "title", 300),
@@ -411,6 +517,7 @@ async function getWorkItem(
     "GET",
     `/rest/v1/work_items?${query({
       id: `eq.${workItemId}`,
+      workspace_id: `eq.${agent.workspace_id}`,
       select: "*",
       limit: "1",
     })}`,
@@ -525,6 +632,7 @@ async function sendMessage(
     "POST",
     "/rest/v1/messages",
     {
+      workspace_id: agent.workspace_id,
       from_agent: agent.id,
       to_agent: requiredUuid(body.to_agent, "to_agent"),
       work_item_id: optionalUuid(body.work_item_id, "work_item_id"),
@@ -541,6 +649,7 @@ async function inbox(url: URL, agent: AgentIdentity): Promise<unknown> {
   const rawLimit = Number(url.searchParams.get("limit") ?? "100");
   const limit = boundedInteger(rawLimit, "limit", 1, 500, 100);
   const params: Record<string, string> = {
+    workspace_id: `eq.${agent.workspace_id}`,
     to_agent: `eq.${agent.id}`,
     select: "*",
     order: "created_at.asc",
@@ -553,10 +662,15 @@ async function inbox(url: URL, agent: AgentIdentity): Promise<unknown> {
   );
 }
 
-async function getState(namespace: string, key: string): Promise<unknown> {
+async function getState(
+  namespace: string,
+  key: string,
+  agent: AgentIdentity,
+): Promise<unknown> {
   const result = one(await databaseRequest(
     "GET",
     `/rest/v1/shared_state?${query({
+      workspace_id: `eq.${agent.workspace_id}`,
       namespace: `eq.${namespace}`,
       key: `eq.${key}`,
       select: "*",
@@ -575,6 +689,7 @@ async function writeState(
 ): Promise<unknown> {
   const body = await parseJsonBody(request);
   return one(await rpc("compare_and_swap_shared_state", {
+    p_workspace_id: agent.workspace_id,
     p_namespace: namespace,
     p_key: key,
     p_value: objectValue(body.value, "value"),
@@ -602,6 +717,7 @@ async function requestApproval(
     "POST",
     "/rest/v1/approvals",
     {
+      workspace_id: agent.workspace_id,
       requested_by: agent.id,
       work_item_id: requiredUuid(body.work_item_id, "work_item_id"),
       action_type: requiredString(body, "action_type", 120),
@@ -623,7 +739,19 @@ export async function handleRequest(request: Request): Promise<Response> {
     const path = normalizePath(url.pathname);
 
     if (request.method === "GET" && path === "/health") {
-      return jsonResponse(200, { status: "ok", version: "0.2.0" }, id);
+      return jsonResponse(200, { status: "ok", version: "0.3.0" }, id);
+    }
+    if (request.method === "POST" && path === "/v1/admin/organizations") {
+      return jsonResponse(201, await createOrganization(request), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/organizations") {
+      return jsonResponse(200, await listOrganizations(request), id);
+    }
+    if (request.method === "POST" && path === "/v1/admin/workspaces") {
+      return jsonResponse(201, await createWorkspace(request), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/workspaces") {
+      return jsonResponse(200, await listWorkspaces(request, url), id);
     }
     if (request.method === "POST" && path === "/v1/admin/agents") {
       return jsonResponse(201, await createAgent(request), id);
@@ -674,7 +802,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       const namespace = decodeURIComponent(stateMatch[1]);
       const key = decodeURIComponent(stateMatch[2]);
       if (request.method === "GET") {
-        return jsonResponse(200, await getState(namespace, key), id);
+        return jsonResponse(200, await getState(namespace, key, agent), id);
       }
       if (request.method === "PUT") {
         return jsonResponse(200, await writeState(request, namespace, key, agent), id);

@@ -8,6 +8,8 @@ from .dependencies import Admin, Agent, Store, as_http_error, get_store
 from .schemas import (
     AdminAgentCreate,
     AdminAgentCreated,
+    AdminOrganizationCreate,
+    AdminWorkspaceCreate,
     AgentIdentity,
     ApprovalCreate,
     ClaimRequest,
@@ -15,8 +17,10 @@ from .schemas import (
     FailRequest,
     HeartbeatRequest,
     MessageCreate,
+    Organization,
     StateWrite,
     WorkItemCreate,
+    Workspace,
 )
 from .security import issue_agent_key
 from .store import StoreError
@@ -31,7 +35,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Autonomous Security Intelligence Control Plane",
-    version="0.1.0",
+    version="0.3.0",
     description="Provider-neutral coordination, authorization, and audit API for autonomous agents.",
     lifespan=lifespan,
 )
@@ -52,6 +56,7 @@ async def create_agent(body: AdminAgentCreate, _: Admin, store: Store) -> AdminA
     payload = serialize(body)
     payload.update(
         {
+            "p_workspace_id": payload.pop("workspace_id"),
             "p_credential_id": str(issued.credential_id),
             "p_key_hash": issued.encoded_hash,
             "p_name": payload.pop("name"),
@@ -75,6 +80,54 @@ async def create_agent(body: AdminAgentCreate, _: Admin, store: Store) -> AdminA
     )
 
 
+@app.post(
+    "/v1/admin/organizations",
+    response_model=Organization,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_organization(
+    body: AdminOrganizationCreate, _: Admin, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.create_organization(serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/organizations", response_model=list[Organization])
+async def list_organizations(_: Admin, store: Store) -> list[dict[str, Any]]:
+    try:
+        return await store.list_organizations()
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post(
+    "/v1/admin/workspaces",
+    response_model=Workspace,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_workspace(
+    body: AdminWorkspaceCreate, _: Admin, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.create_workspace(serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/workspaces", response_model=list[Workspace])
+async def list_workspaces(
+    _: Admin,
+    store: Store,
+    organization_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    try:
+        return await store.list_workspaces(organization_id)
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
 @app.get("/v1/me", response_model=AgentIdentity)
 async def me(agent: Agent) -> dict[str, Any]:
     return agent
@@ -83,7 +136,9 @@ async def me(agent: Agent) -> dict[str, Any]:
 @app.post("/v1/work-items", status_code=status.HTTP_201_CREATED)
 async def create_work_item(body: WorkItemCreate, agent: Agent, store: Store) -> dict[str, Any]:
     try:
-        return await store.create_work_item(UUID(agent["id"]), serialize(body))
+        return await store.create_work_item(
+            UUID(agent["workspace_id"]), UUID(agent["id"]), serialize(body)
+        )
     except StoreError as exc:
         raise as_http_error(exc) from exc
 
@@ -91,7 +146,7 @@ async def create_work_item(body: WorkItemCreate, agent: Agent, store: Store) -> 
 @app.get("/v1/work-items/{work_item_id}")
 async def get_work_item(work_item_id: UUID, agent: Agent, store: Store) -> dict[str, Any]:
     try:
-        item = await store.get_work_item(work_item_id)
+        item = await store.get_work_item(UUID(agent["workspace_id"]), work_item_id)
     except StoreError as exc:
         raise as_http_error(exc) from exc
     if not item:
@@ -150,7 +205,9 @@ async def send_message(body: MessageCreate, agent: Agent, store: Store) -> dict[
     if body.to_agent is None:
         raise HTTPException(status_code=422, detail="to_agent is required")
     try:
-        return await store.send_message(UUID(agent["id"]), serialize(body))
+        return await store.send_message(
+            UUID(agent["workspace_id"]), UUID(agent["id"]), serialize(body)
+        )
     except StoreError as exc:
         raise as_http_error(exc) from exc
 
@@ -163,15 +220,17 @@ async def inbox(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     try:
-        return await store.inbox(UUID(agent["id"]), unread_only, limit)
+        return await store.inbox(
+            UUID(agent["workspace_id"]), UUID(agent["id"]), unread_only, limit
+        )
     except StoreError as exc:
         raise as_http_error(exc) from exc
 
 
 @app.get("/v1/state/{namespace}/{key}")
-async def get_state(namespace: str, key: str, _: Agent, store: Store) -> dict[str, Any]:
+async def get_state(namespace: str, key: str, agent: Agent, store: Store) -> dict[str, Any]:
     try:
-        value = await store.get_state(namespace, key)
+        value = await store.get_state(UUID(agent["workspace_id"]), namespace, key)
     except StoreError as exc:
         raise as_http_error(exc) from exc
     if not value:
@@ -183,7 +242,8 @@ async def get_state(namespace: str, key: str, _: Agent, store: Store) -> dict[st
 async def write_state(namespace: str, key: str, body: StateWrite, agent: Agent, store: Store) -> dict[str, Any]:
     try:
         return await store.write_state(
-            UUID(agent["id"]), namespace, key, body.value, body.expected_version
+            UUID(agent["workspace_id"]), UUID(agent["id"]), namespace, key,
+            body.value, body.expected_version
         )
     except StoreError as exc:
         raise as_http_error(exc) from exc
@@ -192,7 +252,8 @@ async def write_state(namespace: str, key: str, body: StateWrite, agent: Agent, 
 @app.post("/v1/approvals", status_code=status.HTTP_201_CREATED)
 async def request_approval(body: ApprovalCreate, agent: Agent, store: Store) -> dict[str, Any]:
     try:
-        return await store.request_approval(UUID(agent["id"]), serialize(body))
+        return await store.request_approval(
+            UUID(agent["workspace_id"]), UUID(agent["id"]), serialize(body)
+        )
     except StoreError as exc:
         raise as_http_error(exc) from exc
-

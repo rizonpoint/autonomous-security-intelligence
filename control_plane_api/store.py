@@ -89,7 +89,7 @@ class SupabaseStore:
             "/rest/v1/agent_credentials",
             params={
                 "id": f"eq.{credential_id}",
-                "select": "id,agent_id,key_hash,expires_at,revoked_at",
+                "select": "id,workspace_id,agent_id,key_hash,expires_at,revoked_at",
                 "limit": "1",
             },
         )
@@ -108,13 +108,41 @@ class SupabaseStore:
             "/rest/v1/agents",
             params={
                 "id": f"eq.{credential['agent_id']}",
-                "select": "id,name,role,authority_level,capabilities,status,max_concurrency",
+                "workspace_id": f"eq.{credential['workspace_id']}",
+                "select": "id,workspace_id,name,role,authority_level,capabilities,status,max_concurrency",
                 "limit": "1",
             },
         )
         agent = self._one(agents)
         if not agent or agent["status"] == "disabled":
             raise StoreError(403, "agent is disabled")
+
+        workspaces = await self._request(
+            "GET",
+            "/rest/v1/workspaces",
+            params={
+                "id": f"eq.{agent['workspace_id']}",
+                "select": "id,organization_id,status",
+                "limit": "1",
+            },
+        )
+        workspace = self._one(workspaces)
+        if not workspace or workspace["status"] != "active":
+            raise StoreError(403, "agent workspace is unavailable")
+
+        organizations = await self._request(
+            "GET",
+            "/rest/v1/organizations",
+            params={
+                "id": f"eq.{workspace['organization_id']}",
+                "select": "id,status",
+                "limit": "1",
+            },
+        )
+        organization = self._one(organizations)
+        if not organization or organization["status"] != "active":
+            raise StoreError(403, "agent organization is unavailable")
+        agent["organization_id"] = organization["id"]
 
         now = datetime.now(timezone.utc).isoformat()
         await self._request(
@@ -138,18 +166,56 @@ class SupabaseStore:
         result = await self.rpc("register_agent", payload)
         return self._one(result) or {}
 
-    async def create_work_item(self, agent_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
-        body = {**payload, "requested_by": str(agent_id)}
+    async def create_organization(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._request(
+            "POST", "/rest/v1/organizations", json=payload, prefer="return=representation"
+        )
+        return self._one(result) or {}
+
+    async def list_organizations(self) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET",
+            "/rest/v1/organizations",
+            params={"select": "*", "order": "created_at.asc"},
+        ) or []
+
+    async def create_workspace(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await self._request(
+            "POST", "/rest/v1/workspaces", json=payload, prefer="return=representation"
+        )
+        return self._one(result) or {}
+
+    async def list_workspaces(self, organization_id: UUID | None) -> list[dict[str, Any]]:
+        params = {"select": "*", "order": "created_at.asc"}
+        if organization_id is not None:
+            params["organization_id"] = f"eq.{organization_id}"
+        return await self._request("GET", "/rest/v1/workspaces", params=params) or []
+
+    async def create_work_item(
+        self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        body = {
+            **payload,
+            "workspace_id": str(workspace_id),
+            "requested_by": str(agent_id),
+        }
         result = await self._request(
             "POST", "/rest/v1/work_items", json=body, prefer="return=representation"
         )
         return self._one(result) or {}
 
-    async def get_work_item(self, work_item_id: UUID) -> dict[str, Any] | None:
+    async def get_work_item(
+        self, workspace_id: UUID, work_item_id: UUID
+    ) -> dict[str, Any] | None:
         result = await self._request(
             "GET",
             "/rest/v1/work_items",
-            params={"id": f"eq.{work_item_id}", "select": "*", "limit": "1"},
+            params={
+                "workspace_id": f"eq.{workspace_id}",
+                "id": f"eq.{work_item_id}",
+                "select": "*",
+                "limit": "1",
+            },
         )
         return self._one(result)
 
@@ -209,17 +275,26 @@ class SupabaseStore:
         )
         return self._one(result) or {}
 
-    async def send_message(self, agent_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    async def send_message(
+        self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         result = await self._request(
             "POST",
             "/rest/v1/messages",
-            json={**payload, "from_agent": str(agent_id)},
+            json={
+                **payload,
+                "workspace_id": str(workspace_id),
+                "from_agent": str(agent_id),
+            },
             prefer="return=representation",
         )
         return self._one(result) or {}
 
-    async def inbox(self, agent_id: UUID, unread_only: bool, limit: int) -> list[dict[str, Any]]:
+    async def inbox(
+        self, workspace_id: UUID, agent_id: UUID, unread_only: bool, limit: int
+    ) -> list[dict[str, Any]]:
         params = {
+            "workspace_id": f"eq.{workspace_id}",
             "to_agent": f"eq.{agent_id}",
             "select": "*",
             "order": "created_at.asc",
@@ -229,11 +304,14 @@ class SupabaseStore:
             params["read_at"] = "is.null"
         return await self._request("GET", "/rest/v1/messages", params=params) or []
 
-    async def get_state(self, namespace: str, key: str) -> dict[str, Any] | None:
+    async def get_state(
+        self, workspace_id: UUID, namespace: str, key: str
+    ) -> dict[str, Any] | None:
         result = await self._request(
             "GET",
             "/rest/v1/shared_state",
             params={
+                "workspace_id": f"eq.{workspace_id}",
                 "namespace": f"eq.{namespace}",
                 "key": f"eq.{key}",
                 "select": "*",
@@ -243,12 +321,13 @@ class SupabaseStore:
         return self._one(result)
 
     async def write_state(
-        self, agent_id: UUID, namespace: str, key: str,
+        self, workspace_id: UUID, agent_id: UUID, namespace: str, key: str,
         value: dict[str, Any], expected_version: int
     ) -> dict[str, Any]:
         result = await self.rpc(
             "compare_and_swap_shared_state",
             {
+                "p_workspace_id": str(workspace_id),
                 "p_namespace": namespace,
                 "p_key": key,
                 "p_value": value,
@@ -258,12 +337,17 @@ class SupabaseStore:
         )
         return self._one(result) or {}
 
-    async def request_approval(self, agent_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
+    async def request_approval(
+        self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         result = await self._request(
             "POST",
             "/rest/v1/approvals",
-            json={**payload, "requested_by": str(agent_id)},
+            json={
+                **payload,
+                "workspace_id": str(workspace_id),
+                "requested_by": str(agent_id),
+            },
             prefer="return=representation",
         )
         return self._one(result) or {}
-

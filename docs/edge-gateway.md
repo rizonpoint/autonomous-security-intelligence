@@ -29,7 +29,7 @@ revocation and expiration, verifies its bounded salted `scrypt` hash with a
 constant-time comparison, and rejects disabled agents. The Supabase
 `service_role` key exists only in the Edge runtime's built-in environment.
 
-The only unauthenticated route is `GET /health`. The administrator route fails
+The only unauthenticated route is `GET /health`. Administrator routes fail
 closed until `CONTROL_PLANE_ADMIN_TOKEN` exists as a project secret.
 
 ## Project-secret setup
@@ -81,11 +81,12 @@ curl --fail-with-body \
 Expected response:
 
 ```json
-{"status":"ok","version":"0.2.0"}
+{"status":"ok","version":"0.3.0"}
 ```
 
-Calling `/v1/me` without a credential must return HTTP 401. Calling
-`/v1/admin/agents` before the project secret is configured must return HTTP 503.
+Calling `/v1/me` without a credential must return HTTP 401. Calling any
+`/v1/admin/*` route without `X-Admin-Token` must return HTTP 401 after the
+project secret is configured, or HTTP 503 when the secret is unavailable.
 
 ## Operational constraints
 

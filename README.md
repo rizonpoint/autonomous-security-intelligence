@@ -1,13 +1,15 @@
-# Autonomous Security Intelligence
+# Autonomous Companies OS
 
-A production-oriented multi-agent system for account research, signal detection,
-qualification, QA, and human-approved outreach.
+A production-oriented operating system for building and running agent-enabled
+businesses. The first venture is the **Autonomous Cybersecurity Intelligence
+Studio**, beginning with a recurring Account Signal Intelligence service.
 
-The first component is a provider-neutral **agent control plane**. It gives Grok
-Bot, Codex, and future workers one shared place to coordinate work without
-sharing chat history or database credentials directly.
+The first component is a provider-neutral **agent control plane**. It gives
+Chief of Staff, Market Intelligence, Prospecting, Sales, Delivery, Customer
+Success, Finance/Ops, Red Team/QA, and future workers one durable place to
+coordinate without sharing chat history or database credentials directly.
 
-## What v0.2 provides
+## What v0.3 provides
 
 - durable agent registry and capability metadata
 - atomic work queue with ownership, leases, retries, and dead-letter handling
@@ -20,14 +22,21 @@ sharing chat history or database credentials directly.
 - versioned policies/tools plus kill switches, budgets, tracing, and eval records
 - a deployed Supabase Edge gateway with custom, revocable agent authentication
 - a portable FastAPI implementation with the same control-plane lifecycle
+- organization and workspace isolation across businesses, clients, and internal
+  operations
+- workspace-scoped agents, queues, state, policies, budgets, approvals, and
+  audit history
 
 ## Architecture
 
-```text
-Grok Bot ─┐
-Codex ────┼──> Control Plane API ──> Supabase/Postgres
-Workers ──┘          │                       │
-                     └── approvals + audit ──┘
+```mermaid
+flowchart TD
+    OS["Autonomous Companies OS"] --> Biz["Cybersecurity Intelligence Studio"]
+    OS --> Personal["Personal Income workspace"]
+    Biz --> API["Control Plane API"]
+    Personal --> API
+    API --> DB["Supabase / Postgres"]
+    API --> Guard["Approvals, budgets, audit"]
 ```
 
 Agents never receive the Supabase service-role credential. They authenticate to
@@ -46,6 +55,7 @@ docs/
 supabase/migrations/
   202609010001_control_plane.sql
   202609010002_frontier_hardening.sql
+  20260902004613_add_workspace_isolation.sql
 supabase/functions/
   control-plane/          deployed Deno/TypeScript gateway adapter
 supabase/tests/
@@ -67,12 +77,15 @@ agent workflow.
 
 ## Hosted status
 
-The schema and `control-plane` Edge Function are deployed to the hosted Supabase
-development project. Live verification covers public health, protected-route
-denial, and fail-closed administration. Outbound actions remain disabled.
+The v0.3 schema and `control-plane` Edge Function are deployed to the hosted
+Supabase development project. Live verification covers workspace isolation,
+public health, protected-route denial, and fail-closed administration. Outbound
+actions remain disabled.
 
-The next milestone configures the administrator project secret, issues scoped
-keys to Job Scout and Researcher, and runs the first end-to-end work handoff.
+The next milestone bootstraps the company workspace, issues scoped keys to the
+permanent business roster, and runs the first Account Signal Intelligence
+revenue workflow. Job-search agents, if used, belong only in a separate
+Personal Income workspace.
 
 See [architecture](docs/architecture.md), the [agent protocol](docs/agent-protocol.md),
 and the documented [frontier control-plane practices](docs/frontier-control-plane.md).

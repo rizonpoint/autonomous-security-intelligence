@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 class AgentIdentity(BaseModel):
     id: UUID
+    workspace_id: UUID
+    organization_id: UUID
     name: str
     role: str
     authority_level: int
@@ -16,6 +18,7 @@ class AgentIdentity(BaseModel):
 
 
 class AdminAgentCreate(BaseModel):
+    workspace_id: UUID
     name: str = Field(min_length=1, max_length=120)
     role: str = Field(min_length=1, max_length=240)
     authority_level: int = Field(default=1, ge=0, le=4)
@@ -31,6 +34,40 @@ class AdminAgentCreated(BaseModel):
     credential_id: UUID
     api_key: str
     warning: str = "Store this key securely. It cannot be retrieved again."
+
+
+class Organization(BaseModel):
+    id: UUID
+    slug: str
+    name: str
+    status: str
+    metadata: dict[str, Any]
+
+
+class AdminOrganizationCreate(BaseModel):
+    slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=120)
+    name: str = Field(min_length=1, max_length=160)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class Workspace(BaseModel):
+    id: UUID
+    organization_id: UUID
+    slug: str
+    name: str
+    kind: str
+    purpose: str | None = None
+    status: str
+    metadata: dict[str, Any]
+
+
+class AdminWorkspaceCreate(BaseModel):
+    organization_id: UUID
+    slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=120)
+    name: str = Field(min_length=1, max_length=160)
+    kind: Literal["business", "personal", "client", "internal"]
+    purpose: str | None = Field(default=None, max_length=1000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkItemCreate(BaseModel):
@@ -98,4 +135,3 @@ class ApprovalCreate(BaseModel):
     payload: dict[str, Any]
     risk: Literal["low", "medium", "high", "critical"]
     expires_at: datetime | None = None
-
