@@ -6,7 +6,13 @@ from urllib.error import HTTPError
 
 import pytest
 
-from agent_runtime.cli import default_claim_file, lease_fields, sanitized_claim, write_private_json
+from agent_runtime.cli import (
+    claim_info,
+    default_claim_file,
+    lease_fields,
+    sanitized_claim,
+    write_private_json,
+)
 from agent_runtime.client import ControlPlaneClient, ControlPlaneError, load_agent_key
 
 
@@ -122,3 +128,17 @@ def test_default_claim_file_is_scoped_to_agent_key() -> None:
     assert default_claim_file("~/.config/asi/agents/market-intelligence.key").name == (
         "market-intelligence.claim.json"
     )
+
+
+def test_claim_info_preserves_spec_but_omits_lease_token() -> None:
+    claim = {
+        "id": "work-1",
+        "input": {"objective": "Research the market"},
+        "lease_token": "secret-lease",
+    }
+
+    result = claim_info(claim)
+
+    assert result["id"] == "work-1"
+    assert result["input"]["objective"] == "Research the market"
+    assert "lease_token" not in result

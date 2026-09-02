@@ -76,6 +76,10 @@ def sanitized_claim(value: dict[str, Any], claim_file: Path | None = None) -> di
     return result
 
 
+def claim_info(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if key != "lease_token"}
+
+
 def lease_fields(args: argparse.Namespace) -> tuple[str, str, int, Path | None]:
     claim_path = Path(args.claim_file).expanduser() if args.claim_file else None
     if claim_path is not None:
@@ -117,6 +121,9 @@ def parser() -> argparse.ArgumentParser:
         "--claim-file",
         help="Private destination for the full claim; defaults beside the agent key",
     )
+
+    info = commands.add_parser("claim-info")
+    info.add_argument("--claim-file", required=True)
 
     for name in ("heartbeat", "complete", "fail"):
         command = commands.add_parser(name)
@@ -162,6 +169,8 @@ def execute(args: argparse.Namespace) -> Any:
         claim_path = Path(args.claim_file).expanduser() if args.claim_file else default_claim_file(args.key_file)
         write_private_json(claim_path, result)
         return sanitized_claim(result, claim_path)
+    if args.command == "claim-info":
+        return claim_info(json_file(args.claim_file))
     if args.command == "heartbeat":
         work_item_id, lease_token, lease_version, claim_path = lease_fields(args)
         result = client.heartbeat(

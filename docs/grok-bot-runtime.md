@@ -45,4 +45,12 @@ python -m agent_runtime.cli \
   heartbeat \
   --claim-file ~/.config/asi/agents/market-intelligence.claim.json \
   --extend-seconds 600
+
+python -m agent_runtime.cli \
+  --key-file ~/.config/asi/agents/market-intelligence.key \
+  claim-info \
+  --claim-file ~/.config/asi/agents/market-intelligence.claim.json
 ```
+
+`claim-info` displays the work specification while omitting the private lease
+token.
