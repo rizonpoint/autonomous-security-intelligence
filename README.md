@@ -94,7 +94,7 @@ agent workflow.
 
 VentureOS v0.4 is live in the hosted `AI OS` Supabase development project. The
 venture foundation and foreign-key index migrations are recorded, the
-`control-plane` Edge Function is active as version 4 with custom agent
+`control-plane` Edge Function is active as version 5 with custom agent
 authentication, the complete SQL smoke suite passes, and the Supabase security
 advisor reports zero findings. Outbound actions remain disabled.
 
