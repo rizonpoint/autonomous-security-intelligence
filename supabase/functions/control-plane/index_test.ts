@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { handleRequest, normalizePath } from "./index.ts";
+import { canDelegateWork, handleRequest, normalizePath } from "./index.ts";
 
 test("normalizes hosted and local Edge Function paths", () => {
   assert.equal(
@@ -10,6 +10,15 @@ test("normalizes hosted and local Edge Function paths", () => {
   );
   assert.equal(normalizePath("/control-plane/health/"), "/health");
   assert.equal(normalizePath("/health"), "/health");
+});
+
+test("delegation requires manager authority or an explicit capability", () => {
+  assert.equal(canDelegateWork({ authority_level: 1, capabilities: [] }), false);
+  assert.equal(
+    canDelegateWork({ authority_level: 1, capabilities: ["delegate"] }),
+    true,
+  );
+  assert.equal(canDelegateWork({ authority_level: 2, capabilities: [] }), true);
 });
 
 test("health is public, cache-disabled, and correlated", async () => {
