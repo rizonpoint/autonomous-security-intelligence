@@ -9,6 +9,10 @@ from .schemas import (
     AdminAgentCreate,
     AdminAgentCreated,
     AdminOrganizationCreate,
+    AdminModelDeploymentCreate,
+    AdminModelProviderCreate,
+    AdminTaskProfileCreate,
+    AdminVentureCreate,
     AdminWorkspaceCreate,
     AgentIdentity,
     ApprovalCreate,
@@ -17,8 +21,12 @@ from .schemas import (
     FailRequest,
     HeartbeatRequest,
     MessageCreate,
+    ModelDeployment,
+    ModelProvider,
     Organization,
     StateWrite,
+    TaskProfile,
+    Venture,
     WorkItemCreate,
     Workspace,
 )
@@ -34,9 +42,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Autonomous Security Intelligence Control Plane",
-    version="0.3.0",
-    description="Provider-neutral coordination, authorization, and audit API for autonomous agents.",
+    title="VentureOS Control Plane",
+    version="0.4.0",
+    description="Multi-venture, provider-neutral coordination, governance, and audit API.",
     lifespan=lifespan,
 )
 
@@ -128,6 +136,99 @@ async def list_workspaces(
         raise as_http_error(exc) from exc
 
 
+@app.post("/v1/admin/ventures", response_model=Venture, status_code=status.HTTP_201_CREATED)
+async def create_venture(body: AdminVentureCreate, _: Admin, store: Store) -> dict[str, Any]:
+    try:
+        return await store.create_venture(serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/ventures", response_model=list[Venture])
+async def list_ventures(
+    _: Admin, store: Store, organization_id: UUID | None = None
+) -> list[dict[str, Any]]:
+    try:
+        return await store.list_ventures(organization_id)
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/venture-blueprints")
+async def list_venture_blueprints(_: Admin, store: Store) -> list[dict[str, Any]]:
+    try:
+        return await store.list_venture_blueprints()
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post(
+    "/v1/admin/model-providers", response_model=ModelProvider,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_model_provider(
+    body: AdminModelProviderCreate, _: Admin, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.create_model_provider(serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/model-providers", response_model=list[ModelProvider])
+async def list_model_providers(_: Admin, store: Store) -> list[dict[str, Any]]:
+    try:
+        return await store.list_model_providers()
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post(
+    "/v1/admin/model-deployments", response_model=ModelDeployment,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_model_deployment(
+    body: AdminModelDeploymentCreate, _: Admin, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.create_model_deployment(serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/model-deployments", response_model=list[ModelDeployment])
+async def list_model_deployments(
+    _: Admin, store: Store, organization_id: UUID | None = None
+) -> list[dict[str, Any]]:
+    try:
+        return await store.list_model_deployments(organization_id)
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post(
+    "/v1/admin/task-profiles", response_model=TaskProfile,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_task_profile(
+    body: AdminTaskProfileCreate, _: Admin, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.create_task_profile(serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/task-profiles", response_model=list[TaskProfile])
+async def list_task_profiles(
+    _: Admin, store: Store, organization_id: UUID
+) -> list[dict[str, Any]]:
+    try:
+        return await store.list_task_profiles(organization_id)
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
 @app.get("/v1/me", response_model=AgentIdentity)
 async def me(agent: Agent) -> dict[str, Any]:
     return agent
@@ -135,6 +236,9 @@ async def me(agent: Agent) -> dict[str, Any]:
 
 @app.post("/v1/work-items", status_code=status.HTTP_201_CREATED)
 async def create_work_item(body: WorkItemCreate, agent: Agent, store: Store) -> dict[str, Any]:
+    capabilities = agent.get("capabilities") or []
+    if agent.get("authority_level", 0) < 2 and "delegate" not in capabilities:
+        raise HTTPException(status_code=403, detail="agent lacks delegation authority")
     try:
         return await store.create_work_item(
             UUID(agent["workspace_id"]), UUID(agent["id"]), serialize(body)

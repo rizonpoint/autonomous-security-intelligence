@@ -1,6 +1,6 @@
 # Grok Bot Runtime
 
-Grok Bot can operate as a provider runtime for Autonomous Companies OS. The Bot
+Grok Bot can operate as one provider runtime for VentureOS. The Bot
 uses its persistent cloud computer to run the repository's scoped worker CLI;
 it never receives a Supabase key or the control-plane administrator token.
 
@@ -19,6 +19,24 @@ not credential-isolation boundaries.
   required.
 
 ## Worker lifecycle
+
+Chief of Staff and other manager-authorized agents can delegate work through
+the same scoped credential. The gateway requires authority level 2+ or an
+explicit `delegate` capability. `work-create` accepts the gateway's typed
+`WorkItemCreate` JSON contract and prints only the new work item's routing
+summary:
+
+```bash
+python -m agent_runtime.cli \
+  --key-file ~/.config/asi/agents/chief-of-staff.key \
+  work-create --json-file red-team-assignment.json
+```
+
+The gateway always derives `requested_by` and `workspace_id` from the caller's
+credential. A worker cannot impersonate another requester or create work in a
+different workspace by changing the JSON file.
+
+## Execution lifecycle
 
 1. Authenticate with `python -m agent_runtime.cli ... me`.
 2. Claim one compatible work item with a bounded lease. The CLI atomically

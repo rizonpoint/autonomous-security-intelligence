@@ -16,7 +16,11 @@ begin
       'work_items', 'messages', 'shared_state', 'artifacts', 'approvals',
       'audit_events', 'work_attempts', 'policy_versions', 'tool_versions',
       'action_outbox', 'control_flags', 'budgets', 'usage_ledger',
-      'eval_results'
+      'eval_results', 'ventures', 'agent_workspace_memberships',
+      'venture_blueprints', 'venture_blueprint_versions',
+      'venture_blueprint_instances', 'brand_profiles', 'model_providers',
+      'model_deployments', 'task_profiles', 'model_routing_policies',
+      'model_routing_decisions', 'model_budget_reservations'
     )
     and (not c.relrowsecurity or not c.relforcerowsecurity);
 
@@ -31,7 +35,9 @@ begin
     and p.proname in (
       'register_agent', 'claim_next_work_item', 'requeue_expired_work_items',
       'heartbeat_work_attempt', 'complete_work_attempt', 'fail_work_attempt',
-      'reserve_budget', 'compare_and_swap_shared_state'
+      'reserve_budget', 'compare_and_swap_shared_state',
+      'reserve_model_budget', 'settle_model_budget',
+      'release_expired_model_budget_reservations'
     )
     and p.prosecdef;
 
@@ -59,6 +65,7 @@ declare
   organization_id uuid;
   workspace_a uuid;
   workspace_b uuid;
+  venture_a uuid;
   agent_a uuid;
   agent_b uuid;
   registration jsonb;
@@ -80,16 +87,23 @@ begin
   values ('smoke-' || gen_random_uuid()::text, 'Smoke Organization')
   returning id into organization_id;
 
-  insert into public.workspaces (
-    organization_id, slug, name, kind, purpose
+  insert into public.ventures (
+    organization_id, slug, name, venture_type, stage
   ) values (
-    organization_id, 'business-a', 'Business A', 'business', 'isolation smoke test'
+    organization_id, 'venture-a', 'Venture A', 'proof_of_concept', 'validation'
+  ) returning id into venture_a;
+
+  insert into public.workspaces (
+    organization_id, venture_id, slug, name, kind, purpose
+  ) values (
+    organization_id, venture_a, 'business-a', 'Business A', 'business',
+    'isolation smoke test'
   ) returning id into workspace_a;
 
   insert into public.workspaces (
     organization_id, slug, name, kind, purpose
   ) values (
-    organization_id, 'personal-b', 'Personal B', 'personal', 'isolation smoke test'
+    organization_id, 'department-b', 'Department B', 'department', 'isolation smoke test'
   ) returning id into workspace_b;
 
   registration := public.register_agent(
@@ -109,11 +123,18 @@ begin
   registration := public.register_agent(
     workspace_b, gen_random_uuid(),
     'scrypt$16384$8$1$test-salt-b$test-hash-b',
-    'personal-agent-' || gen_random_uuid()::text, 'personal smoke agent',
+    'department-agent-' || gen_random_uuid()::text, 'department smoke agent',
     1::smallint, array['research'], 1::smallint, 'smoke',
     now() + interval '1 hour', '{}'::jsonb
   );
   agent_b := (registration->'agent'->>'id')::uuid;
+
+  if not exists (
+    select 1 from public.agent_workspace_memberships
+    where agent_id = agent_a and workspace_id = workspace_a and status = 'active'
+  ) then
+    raise exception 'new agent did not receive a home-workspace membership';
+  end if;
 
   insert into public.work_items (
     workspace_id, requested_by, work_type, title, priority,
@@ -240,6 +261,168 @@ begin
   );
   if not first_reservation or second_reservation then
     raise exception 'workspace hard budget cap was not enforced';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  organization_a uuid;
+  organization_b uuid;
+  venture_a uuid;
+  workspace_a uuid;
+  workspace_b uuid;
+  agent_a uuid;
+  registration jsonb;
+  blueprint_hash text;
+  provider_id uuid;
+  deployment_id uuid;
+  profile_id uuid;
+  policy_id uuid;
+  decision_id uuid;
+  second_decision_id uuid;
+  budget_id uuid;
+  reservation public.model_budget_reservations;
+  settled public.model_budget_reservations;
+  cross_tenant_membership_blocked boolean := false;
+  cross_scope_budget_blocked boolean := false;
+  hard_limit_blocked boolean := false;
+begin
+  insert into public.organizations (slug, name)
+  values ('venture-smoke-a-' || gen_random_uuid()::text, 'Venture Smoke A')
+  returning id into organization_a;
+  insert into public.organizations (slug, name)
+  values ('venture-smoke-b-' || gen_random_uuid()::text, 'Venture Smoke B')
+  returning id into organization_b;
+
+  insert into public.ventures (
+    organization_id, slug, name, venture_type, stage
+  ) values (
+    organization_a, 'test-venture', 'Test Venture', 'proof_of_concept', 'validation'
+  ) returning id into venture_a;
+
+  insert into public.workspaces (
+    organization_id, venture_id, slug, name, kind
+  ) values (
+    organization_a, venture_a, 'research', 'Research', 'department'
+  ) returning id into workspace_a;
+  insert into public.workspaces (
+    organization_id, slug, name, kind
+  ) values (
+    organization_b, 'other-tenant', 'Other Tenant', 'internal'
+  ) returning id into workspace_b;
+
+  registration := public.register_agent(
+    workspace_a, gen_random_uuid(),
+    'scrypt$16384$8$1$venture-salt$venture-hash',
+    'venture-agent-' || gen_random_uuid()::text, 'venture smoke agent',
+    1::smallint, array['research'], 1::smallint, 'smoke',
+    now() + interval '1 hour', '{}'::jsonb
+  );
+  agent_a := (registration->'agent'->>'id')::uuid;
+
+  begin
+    insert into public.agent_workspace_memberships (agent_id, workspace_id)
+    values (agent_a, workspace_b);
+  exception when others then
+    cross_tenant_membership_blocked := true;
+  end;
+  if not cross_tenant_membership_blocked then
+    raise exception 'cross-tenant agent membership was accepted';
+  end if;
+
+  select definition_sha256 into blueprint_hash
+  from public.venture_blueprint_versions v
+  join public.venture_blueprints b on b.id = v.blueprint_id
+  where b.organization_id is null
+    and b.slug = 'lean-b2b-service'
+    and v.version = '1.0.0';
+  if blueprint_hash is null or length(blueprint_hash) <> 64 then
+    raise exception 'venture blueprint checksum was not generated';
+  end if;
+
+  insert into public.model_providers (slug, name, api_family)
+  values ('smoke-provider', 'Smoke Provider', 'test')
+  returning id into provider_id;
+  insert into public.model_deployments (
+    provider_id, model_key, display_name, endpoint_class, capabilities,
+    input_usd_per_million, output_usd_per_million, pricing_effective_at
+  ) values (
+    provider_id, 'smoke-model', 'Smoke Model', 'hosted', array['research'],
+    1, 2, now()
+  ) returning id into deployment_id;
+  insert into public.task_profiles (
+    organization_id, venture_id, slug, name, required_capabilities,
+    max_cost_usd
+  ) values (
+    organization_a, venture_a, 'evidence-research', 'Evidence Research',
+    array['research'], 0.50
+  ) returning id into profile_id;
+  insert into public.model_routing_policies (
+    task_profile_id, version, strategy, is_active
+  ) values (
+    profile_id, '1.0.0', 'balanced', true
+  ) returning id into policy_id;
+  insert into public.model_routing_decisions (
+    workspace_id, task_profile_id, routing_policy_id,
+    selected_model_deployment_id, candidate_snapshot,
+    estimated_input_tokens, estimated_output_tokens, estimated_cost_usd,
+    reason
+  ) values (
+    workspace_a, profile_id, policy_id, deployment_id,
+    jsonb_build_array(jsonb_build_object(
+      'model_deployment_id', deployment_id,
+      'quality_score', 0.9,
+      'estimated_cost_usd', 0.40
+    )),
+    1000, 1000, 0.40, 'highest eligible score within task cap'
+  ) returning id into decision_id;
+
+  insert into public.budgets (
+    venture_id, scope_type, scope_id, period_start, period_end,
+    hard_limit_usd, soft_limit_usd
+  ) values (
+    venture_a, 'venture', venture_a::text,
+    now() - interval '1 minute', now() + interval '1 hour', 0.50, 0.40
+  ) returning id into budget_id;
+
+  reservation := public.reserve_model_budget(budget_id, decision_id, 0.40, 300);
+  if reservation.status <> 'reserved'
+     or (select reserved_usd from public.budgets where id = budget_id) <> 0.40 then
+    raise exception 'model budget reservation was not recorded';
+  end if;
+
+  settled := public.settle_model_budget(reservation.id, 0.35);
+  if settled.status <> 'settled'
+     or (select reserved_usd from public.budgets where id = budget_id) <> 0
+     or (select spent_usd from public.budgets where id = budget_id) <> 0.35 then
+    raise exception 'model budget settlement was not reconciled';
+  end if;
+
+  begin
+    insert into public.model_routing_decisions (
+      workspace_id, task_profile_id, routing_policy_id,
+      selected_model_deployment_id, candidate_snapshot,
+      estimated_cost_usd, reason
+    ) values (
+      workspace_a, profile_id, policy_id, deployment_id, '[]'::jsonb,
+      0.20, 'hard-limit smoke'
+    ) returning id into second_decision_id;
+    perform public.reserve_model_budget(budget_id, second_decision_id, 0.20, 300);
+  exception when others then
+    hard_limit_blocked := true;
+  end;
+  if not hard_limit_blocked then
+    raise exception 'venture model hard limit was not enforced';
+  end if;
+
+  begin
+    update public.budgets set venture_id = null where id = budget_id;
+  exception when others then
+    cross_scope_budget_blocked := true;
+  end;
+  if not cross_scope_budget_blocked then
+    raise exception 'venture budget scope could be detached';
   end if;
 end;
 $$;

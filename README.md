@@ -1,15 +1,16 @@
-# Autonomous Companies OS
+# VentureOS
 
-A production-oriented operating system for building and running agent-enabled
-businesses. The first venture is the **Autonomous Cybersecurity Intelligence
-Studio**, beginning with a recurring Account Signal Intelligence service.
+A production-oriented **Agentic Venture Studio OS** for launching, operating,
+and evaluating multiple agent-enabled businesses. The first proof venture is a
+cybersecurity intelligence studio beginning with a recurring Account Signal
+Intelligence service.
 
 The first component is a provider-neutral **agent control plane**. It gives
 Chief of Staff, Market Intelligence, Prospecting, Sales, Delivery, Customer
 Success, Finance/Ops, Red Team/QA, and future workers one durable place to
 coordinate without sharing chat history or database credentials directly.
 
-## What v0.3 provides
+## What v0.4 provides
 
 - durable agent registry and capability metadata
 - atomic work queue with ownership, leases, retries, and dead-letter handling
@@ -26,17 +27,28 @@ coordinate without sharing chat history or database credentials directly.
   operations
 - workspace-scoped agents, queues, state, policies, budgets, approvals, and
   audit history
+- explicit ventures beneath each tenant organization
+- department and client workspaces within a venture
+- multi-workspace agent membership without shared credentials
+- versioned venture blueprints for repeatable proof ventures and white-label use
+- tenant and venture brand-profile seams
+- provider/model catalogs separated from durable agent identities
+- task profiles, routing policies, candidate snapshots, and eval-linked choices
+- venture budgets with pre-call cost reservation and actual-cost settlement
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    OS["Autonomous Companies OS"] --> Biz["Cybersecurity Intelligence Studio"]
-    OS --> Platform["Platform Operations"]
-    Biz --> API["Control Plane API"]
+    OS["VentureOS"] --> Tenant["Tenant / white-label boundary"]
+    Tenant --> V1["Venture: Cybersecurity Studio"]
+    Tenant --> V2["Future venture"]
+    Tenant --> Platform["Platform Operations"]
+    V1 --> API["Multi-venture control plane"]
+    V2 --> API
     Platform --> API
     API --> DB["Supabase / Postgres"]
-    API --> Guard["Approvals, budgets, audit"]
+    API --> Guard["Approvals, budgets, routing, audit"]
 ```
 
 Agents never receive the Supabase service-role credential. They authenticate to
@@ -57,6 +69,7 @@ supabase/migrations/
   202609010001_control_plane.sql
   202609010002_frontier_hardening.sql
   20260902004613_add_workspace_isolation.sql
+  20260902051157_add_venture_os_foundation.sql
 supabase/functions/
   control-plane/          deployed Deno/TypeScript gateway adapter
 supabase/tests/
@@ -79,13 +92,15 @@ agent workflow.
 
 ## Hosted status
 
-The v0.3 schema and `control-plane` Edge Function are deployed to the hosted
-Supabase development project. Live verification covers workspace isolation,
-public health, protected-route denial, and fail-closed administration. Outbound
-actions remain disabled.
+VentureOS v0.4 is live in the hosted `AI OS` Supabase development project. The
+venture foundation and foreign-key index migrations are recorded, the
+`control-plane` Edge Function is active as version 5 with custom agent
+authentication, the complete SQL smoke suite passes, and the Supabase security
+advisor reports zero findings. Outbound actions remain disabled.
 
 The next milestone runs the first Account Signal Intelligence revenue workflow
 through research, Red Team / QA, and commercial preparation.
 
-See [architecture](docs/architecture.md), the [agent protocol](docs/agent-protocol.md),
+See [VentureOS foundation](docs/venture-os.md),
+[architecture](docs/architecture.md), the [agent protocol](docs/agent-protocol.md),
 and the documented [frontier control-plane practices](docs/frontier-control-plane.md).

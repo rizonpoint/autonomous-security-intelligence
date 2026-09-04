@@ -73,6 +73,10 @@ fail-closed administration.
 
 ## Live verification
 
+The `AI OS` development deployment currently runs gateway version 5 with
+`verify_jwt = false` and custom agent/admin authentication enforced in the
+handler.
+
 ```bash
 curl --fail-with-body \
   https://<project-ref>.supabase.co/functions/v1/control-plane/health
@@ -81,7 +85,7 @@ curl --fail-with-body \
 Expected response:
 
 ```json
-{"status":"ok","version":"0.3.0"}
+{"status":"ok","version":"0.4.0"}
 ```
 
 Calling `/v1/me` without a credential must return HTTP 401. Calling any

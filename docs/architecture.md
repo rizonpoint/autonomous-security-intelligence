@@ -5,19 +5,26 @@
 Create one auditable coordination layer that multiple businesses and agent
 runtimes can use. The database is the source of truth; conversations are not.
 
-## Organization and workspace model
+## Tenant, venture, and workspace model
 
-- **Organization:** Autonomous Companies, the durable platform and ownership
-  boundary.
-- **Business workspace:** one operating company or venture, beginning with the
-  Autonomous Cybersecurity Intelligence Studio.
+- **Organization:** the tenant, ownership, and future white-label boundary.
+- **Venture:** one revenue thesis, operating company, client venture, proof of
+  concept, or sandbox beneath that tenant.
+- **Department workspace:** an execution boundary inside a venture, such as
+  Executive, Market Intelligence, Sales, Delivery, or Red Team / QA.
 - **Client workspace:** isolated delivery, context, approvals, and budgets for
   one customer when needed.
-- **Internal workspace:** shared platform or administrative work.
+- **Internal workspace:** tenant-level platform or administrative work that can
+  remain outside a venture.
 
 Every operational record carries a `workspace_id`. Composite foreign keys and
 workspace-aware RPCs reject cross-workspace references even when a caller knows
-another record's UUID. Agent workspace assignment is immutable.
+another record's UUID. An agent keeps an immutable home workspace and can gain
+explicit memberships in other workspaces belonging to the same tenant.
+
+The current cybersecurity workspace remains the first venture's legacy root
+workspace so active worker keys and leases do not change. New ventures should
+use department workspaces from the beginning.
 
 ## Boundaries
 
@@ -27,6 +34,11 @@ another record's UUID. Agent workspace assignment is immutable.
 | Control Plane API | Authentication, authorization, validation, orchestration | Holds database service credentials |
 | Supabase/Postgres | Durable state, work queue, messages, approvals, audit | Private; never exposed with service key to agents |
 | Human approver | Resolves consequential decisions | Required for send, spend, publish, delete, permissions, production |
+
+The model provider is not the agent identity. One durable agent role can be
+routed to different eligible model deployments per task profile. Every routing
+decision records the candidates, policy, price snapshot, estimate, selection,
+and subsequent eval evidence.
 
 ## Authority levels
 

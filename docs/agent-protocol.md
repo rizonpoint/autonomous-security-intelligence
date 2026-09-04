@@ -1,4 +1,4 @@
-# Agent Protocol v0.3
+# Agent Protocol v0.4
 
 ## Identity
 

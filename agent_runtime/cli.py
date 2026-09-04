@@ -76,6 +76,17 @@ def sanitized_claim(value: dict[str, Any], claim_file: Path | None = None) -> di
     return result
 
 
+def sanitized_work_item(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "work_id": value.get("id") or value.get("work_id"),
+        "title": value.get("title"),
+        "status": value.get("status"),
+        "assigned_to": value.get("assigned_to"),
+        "queue": value.get("queue"),
+        "trace_id": value.get("trace_id"),
+    }
+
+
 def claim_info(value: dict[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "lease_token"}
 
@@ -101,7 +112,7 @@ def lease_fields(args: argparse.Namespace) -> tuple[str, str, int, Path | None]:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(description="Scoped Autonomous Companies worker CLI")
+    root = argparse.ArgumentParser(description="Scoped VentureOS worker CLI")
     root.add_argument(
         "--key-file",
         default=os.environ.get("ASI_AGENT_KEY_FILE"),
@@ -114,6 +125,13 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="command", required=True)
 
     commands.add_parser("me")
+
+    work_create = commands.add_parser("work-create")
+    work_create.add_argument(
+        "--json-file",
+        required=True,
+        help="WorkItemCreate JSON object; use - to read standard input",
+    )
 
     claim = commands.add_parser("claim")
     claim.add_argument("--lease-seconds", type=int, default=900)
@@ -162,6 +180,8 @@ def execute(args: argparse.Namespace) -> Any:
 
     if args.command == "me":
         return client.me()
+    if args.command == "work-create":
+        return sanitized_work_item(client.create_work_item(json_file(args.json_file)))
     if args.command == "claim":
         result = client.claim(args.lease_seconds)
         if result is None:
