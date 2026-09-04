@@ -253,6 +253,97 @@ class SupabaseStore:
             },
         ) or []
 
+    async def create_worker_environment(self, payload: dict[str, Any]) -> dict[str, Any]:
+        workspace_id = payload["workspace_id"]
+        workspace = self._one(await self._request(
+            "GET", "/rest/v1/workspaces",
+            params={
+                "id": f"eq.{workspace_id}",
+                "select": "id,organization_id,venture_id",
+                "limit": "1",
+            },
+        ))
+        if not workspace:
+            raise StoreError(404, "workspace not found")
+        body = {
+            **payload,
+            "organization_id": workspace["organization_id"],
+            "venture_id": workspace["venture_id"],
+        }
+        result = await self._request(
+            "POST", "/rest/v1/worker_environments", json=body,
+            prefer="return=representation",
+        )
+        return self._one(result) or {}
+
+    async def list_worker_environments(
+        self, workspace_id: UUID | None
+    ) -> list[dict[str, Any]]:
+        params = {"select": "*", "order": "created_at.asc"}
+        if workspace_id is not None:
+            params["workspace_id"] = f"eq.{workspace_id}"
+        return await self._request(
+            "GET", "/rest/v1/worker_environments", params=params
+        ) or []
+
+    async def runtime_heartbeat(
+        self, agent_id: UUID, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = await self.rpc("heartbeat_agent_runtime", {
+            "p_agent_id": str(agent_id),
+            "p_environment_id": payload["environment_id"],
+            "p_runtime_instance_id": payload["runtime_instance_id"],
+            "p_runtime_version": payload.get("runtime_version"),
+            "p_routine_triggered": payload.get("routine_triggered", False),
+            "p_metadata": payload.get("metadata", {}),
+        })
+        return self._one(result) or {}
+
+    async def pull_runtime_signals(
+        self, binding_id: UUID, agent_id: UUID, limit: int
+    ) -> list[dict[str, Any]]:
+        return await self.rpc("pull_dispatch_signals", {
+            "p_runtime_binding_id": str(binding_id),
+            "p_agent_id": str(agent_id),
+            "p_limit": limit,
+        }) or []
+
+    async def acknowledge_runtime_signal(
+        self, signal_id: int, agent_id: UUID
+    ) -> dict[str, Any]:
+        result = await self.rpc("acknowledge_dispatch_signal", {
+            "p_signal_id": signal_id,
+            "p_agent_id": str(agent_id),
+        })
+        return self._one(result) or {}
+
+    async def create_artifact(
+        self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = await self._request(
+            "POST", "/rest/v1/artifacts",
+            json={
+                **payload,
+                "workspace_id": str(workspace_id),
+                "created_by": str(agent_id),
+            },
+            prefer="return=representation",
+        )
+        return self._one(result) or {}
+
+    async def list_artifacts(
+        self, workspace_id: UUID, work_item_id: UUID
+    ) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET", "/rest/v1/artifacts",
+            params={
+                "workspace_id": f"eq.{workspace_id}",
+                "work_item_id": f"eq.{work_item_id}",
+                "select": "*",
+                "order": "artifact_version.desc,created_at.desc",
+            },
+        ) or []
+
     async def create_work_item(
         self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
     ) -> dict[str, Any]:

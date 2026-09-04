@@ -10,6 +10,10 @@ test("normalizes hosted and local Edge Function paths", () => {
   );
   assert.equal(normalizePath("/control-plane/health/"), "/health");
   assert.equal(normalizePath("/health"), "/health");
+  assert.equal(
+    normalizePath("/functions/v1/control-plane/v1/runtime/signals/42/ack"),
+    "/v1/runtime/signals/42/ack",
+  );
 });
 
 test("delegation requires manager authority or an explicit capability", () => {
@@ -30,7 +34,7 @@ test("health is public, cache-disabled, and correlated", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("x-request-id"), "test-request-1");
-  assert.deepEqual(await response.json(), { status: "ok", version: "0.4.0" });
+  assert.deepEqual(await response.json(), { status: "ok", version: "0.5.0" });
 });
 
 test("protected routes fail closed without an agent credential", async () => {

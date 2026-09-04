@@ -18,6 +18,33 @@ not credential-isolation boundaries.
 - Use separate infrastructure when cryptographic isolation between workers is
   required.
 
+VentureOS records the shared Grok computer as a `shared_account` worker
+environment. Separate Bot names do not change that trust-zone declaration.
+Use separate Grok users/computers for identity isolation; use a managed microVM
+or dedicated host when the venture requires an independently attested runtime.
+
+## Scheduling boundary
+
+Grok routines are wake-up hints, not workflow state. A delayed or skipped
+routine cannot lose an assignment because the authoritative item, lease,
+retry count, trace, and completion state live in Postgres. Each routine should
+run one `poll` command and let VentureOS decide what is available.
+
+```bash
+python -m agent_runtime.cli \
+  --key-file ~/.config/asi/agents/market-intelligence.key \
+  poll \
+  --environment-id "$ASI_WORKER_ENVIRONMENT_ID" \
+  --routine-triggered \
+  --lease-seconds 900
+```
+
+The first poll creates a stable, private `*.runtime.json` file beside the
+agent key. Later polls reuse that runtime instance ID, heartbeat the binding,
+read inbox messages and durable dispatch signals, and claim at most one
+compatible work item. A successfully matched work signal is acknowledged only
+after the work claim succeeds.
+
 ## Worker lifecycle
 
 Chief of Staff and other manager-authorized agents can delegate work through
@@ -48,6 +75,11 @@ different workspace by changing the JSON file.
 6. Heartbeat, complete, or fail with `--claim-file`; the lease token never
    needs to appear in chat or a process command line.
 7. Message Red Team / QA with the linked work-item ID.
+
+Structured deliverables should also be registered with `artifact`. The
+manifest records the filename, version, URI, media type, checksum,
+classification, and work item so downstream agents can retrieve the correct
+version without relying on chat attachments.
 
 The CLI never accepts an agent key as a command-line value. It reads a mode-0600
 file supplied through `--key-file` or `ASI_AGENT_KEY_FILE` and never prints the

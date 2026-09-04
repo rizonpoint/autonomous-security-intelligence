@@ -12,10 +12,12 @@ from .schemas import (
     AdminModelDeploymentCreate,
     AdminModelProviderCreate,
     AdminTaskProfileCreate,
+    AdminWorkerEnvironmentCreate,
     AdminVentureCreate,
     AdminWorkspaceCreate,
     AgentIdentity,
     ApprovalCreate,
+    ArtifactCreate,
     ClaimRequest,
     CompleteRequest,
     FailRequest,
@@ -25,10 +27,12 @@ from .schemas import (
     ModelProvider,
     Organization,
     StateWrite,
+    RuntimeHeartbeat,
     TaskProfile,
     Venture,
     WorkItemCreate,
     Workspace,
+    WorkerEnvironment,
 )
 from .security import issue_agent_key
 from .store import StoreError
@@ -43,7 +47,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="VentureOS Control Plane",
-    version="0.4.0",
+    version="0.5.0",
     description="Multi-venture, provider-neutral coordination, governance, and audit API.",
     lifespan=lifespan,
 )
@@ -158,6 +162,29 @@ async def list_ventures(
 async def list_venture_blueprints(_: Admin, store: Store) -> list[dict[str, Any]]:
     try:
         return await store.list_venture_blueprints()
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post(
+    "/v1/admin/worker-environments", response_model=WorkerEnvironment,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_worker_environment(
+    body: AdminWorkerEnvironmentCreate, _: Admin, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.create_worker_environment(serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/admin/worker-environments", response_model=list[WorkerEnvironment])
+async def list_worker_environments(
+    _: Admin, store: Store, workspace_id: UUID | None = None
+) -> list[dict[str, Any]]:
+    try:
+        return await store.list_worker_environments(workspace_id)
     except StoreError as exc:
         raise as_http_error(exc) from exc
 
@@ -327,6 +354,65 @@ async def inbox(
         return await store.inbox(
             UUID(agent["workspace_id"]), UUID(agent["id"]), unread_only, limit
         )
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post("/v1/runtime/heartbeat")
+async def runtime_heartbeat(
+    body: RuntimeHeartbeat, agent: Agent, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.runtime_heartbeat(UUID(agent["id"]), serialize(body))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/runtime/signals")
+async def runtime_signals(
+    runtime_binding_id: UUID,
+    agent: Agent,
+    store: Store,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[dict[str, Any]]:
+    try:
+        return await store.pull_runtime_signals(
+            runtime_binding_id, UUID(agent["id"]), limit
+        )
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post("/v1/runtime/signals/{signal_id}/ack")
+async def acknowledge_runtime_signal(
+    signal_id: int, agent: Agent, store: Store
+) -> dict[str, Any]:
+    try:
+        return await store.acknowledge_runtime_signal(signal_id, UUID(agent["id"]))
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.post("/v1/artifacts", status_code=status.HTTP_201_CREATED)
+async def create_artifact(
+    body: ArtifactCreate, agent: Agent, store: Store
+) -> dict[str, Any]:
+    await get_work_item(body.work_item_id, agent, store)
+    try:
+        return await store.create_artifact(
+            UUID(agent["workspace_id"]), UUID(agent["id"]), serialize(body)
+        )
+    except StoreError as exc:
+        raise as_http_error(exc) from exc
+
+
+@app.get("/v1/work-items/{work_item_id}/artifacts")
+async def list_work_artifacts(
+    work_item_id: UUID, agent: Agent, store: Store
+) -> list[dict[str, Any]]:
+    await get_work_item(work_item_id, agent, store)
+    try:
+        return await store.list_artifacts(UUID(agent["workspace_id"]), work_item_id)
     except StoreError as exc:
         raise as_http_error(exc) from exc
 

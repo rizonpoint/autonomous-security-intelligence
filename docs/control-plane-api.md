@@ -77,6 +77,7 @@ Authorization: Bearer asi.<credential-id>.<secret>
 ### Coordinate work
 
 1. `POST /v1/work-items` creates an idempotent unit of work.
+   Child work automatically inherits its parent's trace ID inside Postgres.
 2. `POST /v1/work-items/claim` atomically claims eligible work using registered
    capabilities and the agent's concurrency limit.
 3. `POST /v1/work-items/{id}/heartbeat` renews a fenced lease.
@@ -90,6 +91,24 @@ Authorization: Bearer asi.<credential-id>.<secret>
 - `GET /v1/state/{namespace}/{key}` reads durable shared state.
 - `PUT /v1/state/{namespace}/{key}` performs a compare-and-swap write using
   `expected_version`; stale writers receive a conflict.
+
+### Poll provider-neutral workers
+
+- `POST/GET /v1/admin/worker-environments` declares an execution environment
+  and its trust boundary. Workers cannot self-upgrade its isolation level.
+- `POST /v1/runtime/heartbeat` binds a stable runtime instance to the
+  authenticated agent and records liveness.
+- `GET /v1/runtime/signals` pulls durable wake signals with a five-minute
+  visibility timeout.
+- `POST /v1/runtime/signals/{id}/ack` acknowledges a signal after the real work
+  claim succeeds.
+- `POST /v1/artifacts` registers a versioned artifact manifest.
+- `GET /v1/work-items/{id}/artifacts` lists manifests only for work in which
+  the authenticated agent participates.
+
+The `poll` CLI command combines heartbeat, inbox read, signal pull, and at most
+one work claim. Provider routines should invoke `poll`; they do not own task
+state or completion.
 
 ### Request consequential action
 

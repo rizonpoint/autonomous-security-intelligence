@@ -14,6 +14,8 @@ VENTURE_ID = uuid4()
 PROVIDER_ID = uuid4()
 DEPLOYMENT_ID = uuid4()
 TASK_PROFILE_ID = uuid4()
+ENVIRONMENT_ID = uuid4()
+RUNTIME_BINDING_ID = uuid4()
 
 
 def agent_identity() -> dict[str, Any]:
@@ -40,6 +42,7 @@ class FakeStore:
         self.model_providers: list[dict[str, Any]] = []
         self.model_deployments: list[dict[str, Any]] = []
         self.task_profiles: list[dict[str, Any]] = []
+        self.worker_environments: list[dict[str, Any]] = []
 
     async def register_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.registration_payload = payload
@@ -131,6 +134,43 @@ class FakeStore:
 
     async def list_task_profiles(self, organization_id: UUID) -> list[dict[str, Any]]:
         return self.task_profiles
+
+    async def create_worker_environment(self, payload: dict[str, Any]) -> dict[str, Any]:
+        environment = {
+            "id": str(ENVIRONMENT_ID),
+            "organization_id": str(ORGANIZATION_ID),
+            "venture_id": str(VENTURE_ID),
+            "attestation_state": "declared",
+            "status": "active",
+            **payload,
+        }
+        self.worker_environments.append(environment)
+        return environment
+
+    async def list_worker_environments(
+        self, workspace_id: UUID | None
+    ) -> list[dict[str, Any]]:
+        return self.worker_environments
+
+    async def runtime_heartbeat(
+        self, agent_id: UUID, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "id": str(RUNTIME_BINDING_ID),
+            "agent_id": str(agent_id),
+            "status": "online",
+            **payload,
+        }
+
+    async def pull_runtime_signals(
+        self, binding_id: UUID, agent_id: UUID, limit: int
+    ) -> list[dict[str, Any]]:
+        return [{"id": 7, "runtime_binding_id": str(binding_id), "agent_id": str(agent_id)}]
+
+    async def acknowledge_runtime_signal(
+        self, signal_id: int, agent_id: UUID
+    ) -> dict[str, Any]:
+        return {"id": signal_id, "agent_id": str(agent_id), "status": "acknowledged"}
 
     async def create_work_item(
         self, workspace_id: UUID, agent_id: UUID, payload: dict[str, Any]
@@ -324,6 +364,51 @@ async def test_admin_creates_venture_and_model_routing_catalog() -> None:
         assert len(store.model_providers) == 1
         assert len(store.model_deployments) == 1
         assert len(store.task_profiles) == 1
+    finally:
+        await client.aclose()
+        clear_overrides()
+
+
+async def test_admin_declares_trust_zone_and_worker_reports_liveness() -> None:
+    client, store = make_client()
+    try:
+        environment = await client.post(
+            "/v1/admin/worker-environments",
+            json={
+                "workspace_id": str(WORKSPACE_ID),
+                "slug": "shared-grok",
+                "name": "Shared Grok Computer",
+                "provider": "xai",
+                "runtime_type": "grok_bot",
+                "isolation_level": "shared_account",
+            },
+        )
+        assert environment.status_code == 201, environment.text
+        assert environment.json()["isolation_level"] == "shared_account"
+
+        heartbeat = await client.post(
+            "/v1/runtime/heartbeat",
+            json={
+                "environment_id": str(ENVIRONMENT_ID),
+                "runtime_instance_id": str(uuid4()),
+                "runtime_version": "agent-runtime/0.5.0",
+                "routine_triggered": True,
+            },
+        )
+        assert heartbeat.status_code == 200, heartbeat.text
+        assert heartbeat.json()["status"] == "online"
+
+        signals = await client.get(
+            "/v1/runtime/signals",
+            params={"runtime_binding_id": str(RUNTIME_BINDING_ID)},
+        )
+        assert signals.status_code == 200, signals.text
+        assert signals.json()[0]["id"] == 7
+
+        ack = await client.post("/v1/runtime/signals/7/ack")
+        assert ack.status_code == 200, ack.text
+        assert ack.json()["status"] == "acknowledged"
+        assert len(store.worker_environments) == 1
     finally:
         await client.aclose()
         clear_overrides()

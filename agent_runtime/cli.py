@@ -7,6 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .client import (
     DEFAULT_CONTROL_PLANE_URL,
@@ -59,6 +60,23 @@ def write_private_json(path: str | Path, value: dict[str, Any]) -> Path:
 def default_claim_file(key_file: str | Path) -> Path:
     key_path = Path(key_file).expanduser()
     return key_path.with_suffix(".claim.json")
+
+
+def default_runtime_file(key_file: str | Path) -> Path:
+    key_path = Path(key_file).expanduser()
+    return key_path.with_suffix(".runtime.json")
+
+
+def runtime_state(path: str | Path) -> tuple[Path, dict[str, Any]]:
+    target = Path(path).expanduser()
+    if target.exists():
+        value = json_file(str(target))
+    else:
+        value = {"runtime_instance_id": str(uuid4())}
+        write_private_json(target, value)
+    if not value.get("runtime_instance_id"):
+        raise ControlPlaneError(2, "runtime file is missing runtime_instance_id")
+    return target, value
 
 
 def sanitized_claim(value: dict[str, Any], claim_file: Path | None = None) -> dict[str, Any]:
@@ -126,6 +144,21 @@ def parser() -> argparse.ArgumentParser:
 
     commands.add_parser("me")
 
+    inbox = commands.add_parser("inbox")
+    inbox.add_argument("--include-read", action="store_true")
+    inbox.add_argument("--limit", type=int, default=100)
+
+    poll = commands.add_parser("poll")
+    poll.add_argument("--environment-id", required=True)
+    poll.add_argument("--runtime-file")
+    poll.add_argument("--runtime-version", default="agent-runtime/0.5.0")
+    poll.add_argument("--routine-triggered", action="store_true")
+    poll.add_argument("--lease-seconds", type=int, default=900)
+    poll.add_argument("--claim-file")
+    poll.add_argument("--no-claim", action="store_true")
+    poll.add_argument("--message-limit", type=int, default=100)
+    poll.add_argument("--signal-limit", type=int, default=20)
+
     work_create = commands.add_parser("work-create")
     work_create.add_argument(
         "--json-file",
@@ -170,6 +203,12 @@ def parser() -> argparse.ArgumentParser:
     approval.add_argument("--risk", choices=("low", "medium", "high", "critical"), required=True)
     approval.add_argument("--json-file", required=True)
     approval.add_argument("--expires-at")
+
+    artifact = commands.add_parser("artifact")
+    artifact.add_argument("--json-file", required=True)
+
+    artifacts = commands.add_parser("artifacts")
+    artifacts.add_argument("--work-item-id", required=True)
     return root
 
 
@@ -180,6 +219,49 @@ def execute(args: argparse.Namespace) -> Any:
 
     if args.command == "me":
         return client.me()
+    if args.command == "inbox":
+        return client.inbox(not args.include_read, args.limit)
+    if args.command == "poll":
+        runtime_path = Path(args.runtime_file).expanduser() if args.runtime_file else default_runtime_file(args.key_file)
+        runtime_path, state = runtime_state(runtime_path)
+        heartbeat = client.runtime_heartbeat(
+            args.environment_id,
+            str(state["runtime_instance_id"]),
+            args.runtime_version,
+            args.routine_triggered,
+        )
+        binding_id = heartbeat.get("id")
+        if not binding_id:
+            raise ControlPlaneError(502, "runtime heartbeat returned no binding id")
+        state.update({
+            "environment_id": args.environment_id,
+            "runtime_binding_id": binding_id,
+            "runtime_version": args.runtime_version,
+        })
+        write_private_json(runtime_path, state)
+        messages = client.inbox(True, args.message_limit)
+        signals = client.runtime_signals(str(binding_id), args.signal_limit)
+        claim_result = None if args.no_claim else client.claim(args.lease_seconds)
+        sanitized = None
+        if claim_result is not None:
+            claim_path = Path(args.claim_file).expanduser() if args.claim_file else default_claim_file(args.key_file)
+            write_private_json(claim_path, claim_result)
+            sanitized = sanitized_claim(claim_result, claim_path)
+            claimed_id = claim_result.get("id") or claim_result.get("work_id")
+            for signal in signals:
+                if signal.get("work_item_id") == claimed_id and signal.get("id") is not None:
+                    client.acknowledge_signal(int(signal["id"]))
+        return {
+            "runtime": {
+                "binding_id": binding_id,
+                "environment_id": args.environment_id,
+                "status": heartbeat.get("status"),
+                "runtime_file": str(runtime_path),
+            },
+            "messages": messages,
+            "signals": signals,
+            "claim": sanitized,
+        }
     if args.command == "work-create":
         return sanitized_work_item(client.create_work_item(json_file(args.json_file)))
     if args.command == "claim":
@@ -239,6 +321,10 @@ def execute(args: argparse.Namespace) -> Any:
             args.risk,
             args.expires_at,
         )
+    if args.command == "artifact":
+        return client.create_artifact(json_file(args.json_file))
+    if args.command == "artifacts":
+        return client.work_artifacts(args.work_item_id)
     raise ControlPlaneError(2, "unsupported command")
 
 

@@ -20,7 +20,8 @@ begin
       'venture_blueprints', 'venture_blueprint_versions',
       'venture_blueprint_instances', 'brand_profiles', 'model_providers',
       'model_deployments', 'task_profiles', 'model_routing_policies',
-      'model_routing_decisions', 'model_budget_reservations'
+      'model_routing_decisions', 'model_budget_reservations',
+      'worker_environments', 'agent_runtime_bindings', 'dispatch_signals'
     )
     and (not c.relrowsecurity or not c.relforcerowsecurity);
 
@@ -37,7 +38,9 @@ begin
       'heartbeat_work_attempt', 'complete_work_attempt', 'fail_work_attempt',
       'reserve_budget', 'compare_and_swap_shared_state',
       'reserve_model_budget', 'settle_model_budget',
-      'release_expired_model_budget_reservations'
+      'release_expired_model_budget_reservations',
+      'heartbeat_agent_runtime', 'pull_dispatch_signals',
+      'acknowledge_dispatch_signal', 'run_worker_watchdog'
     )
     and p.prosecdef;
 
@@ -423,6 +426,136 @@ begin
   end;
   if not cross_scope_budget_blocked then
     raise exception 'venture budget scope could be detached';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  organization_id uuid;
+  venture_id uuid;
+  workspace_id uuid;
+  manager_id uuid;
+  worker_id uuid;
+  environment_id uuid;
+  runtime_instance_id uuid := gen_random_uuid();
+  binding public.agent_runtime_bindings;
+  parent_work public.work_items;
+  child_work public.work_items;
+  signal public.dispatch_signals;
+  registration jsonb;
+begin
+  insert into public.organizations (slug, name)
+  values ('runtime-' || gen_random_uuid()::text, 'Runtime Smoke Organization')
+  returning id into organization_id;
+
+  insert into public.ventures (organization_id, slug, name)
+  values (organization_id, 'runtime-venture', 'Runtime Venture')
+  returning id into venture_id;
+
+  insert into public.workspaces (
+    organization_id, venture_id, slug, name, kind
+  ) values (
+    organization_id, venture_id, 'runtime-workspace', 'Runtime Workspace', 'business'
+  ) returning id into workspace_id;
+
+  registration := public.register_agent(
+    workspace_id, gen_random_uuid(),
+    'scrypt$16384$8$1$runtime-manager$runtime-manager-hash',
+    'runtime-manager-' || gen_random_uuid()::text, 'runtime smoke manager',
+    2::smallint, array['delegate'], 1::smallint, 'smoke', null, '{}'::jsonb
+  );
+  manager_id := (registration->'agent'->>'id')::uuid;
+
+  registration := public.register_agent(
+    workspace_id, gen_random_uuid(),
+    'scrypt$16384$8$1$runtime-worker$runtime-worker-hash',
+    'runtime-worker-' || gen_random_uuid()::text, 'runtime smoke worker',
+    1::smallint, array['research'], 1::smallint, 'smoke', null, '{}'::jsonb
+  );
+  worker_id := (registration->'agent'->>'id')::uuid;
+
+  insert into public.worker_environments (
+    organization_id, venture_id, workspace_id, slug, name, provider,
+    runtime_type, isolation_level, expected_poll_interval_seconds
+  ) values (
+    organization_id, venture_id, workspace_id, 'shared-grok', 'Shared Grok',
+    'xai', 'grok_bot', 'shared_account', 300
+  ) returning id into environment_id;
+
+  select * into binding from public.heartbeat_agent_runtime(
+    worker_id, environment_id, runtime_instance_id,
+    'agent-runtime/0.5.0', true, '{"smoke":true}'::jsonb
+  );
+  if binding.agent_id <> worker_id or binding.status <> 'online' then
+    raise exception 'runtime heartbeat did not create an online binding';
+  end if;
+
+  insert into public.work_items (
+    workspace_id, requested_by, assigned_to, work_type, title,
+    required_capabilities
+  ) values (
+    workspace_id, manager_id, worker_id, 'runtime-smoke', 'Parent Work',
+    array['research']
+  ) returning * into parent_work;
+
+  insert into public.work_items (
+    workspace_id, parent_id, requested_by, assigned_to, work_type, title,
+    required_capabilities
+  ) values (
+    workspace_id, parent_work.id, manager_id, worker_id,
+    'runtime-smoke-child', 'Child Work', array['research']
+  ) returning * into child_work;
+
+  if child_work.trace_id <> parent_work.trace_id then
+    raise exception 'child work did not inherit the parent trace';
+  end if;
+
+  select * into signal from public.pull_dispatch_signals(
+    binding.id, worker_id, 20
+  ) where work_item_id = parent_work.id;
+  if signal.id is null or signal.status <> 'delivered' then
+    raise exception 'durable work signal was not delivered';
+  end if;
+
+  update public.dispatch_signals
+  set available_at = now() - interval '1 second'
+  where id = signal.id;
+  select * into signal from public.pull_dispatch_signals(
+    binding.id, worker_id, 20
+  ) where work_item_id = parent_work.id;
+  if signal.delivery_attempts <> 2 then
+    raise exception 'unacknowledged dispatch signal was not redelivered';
+  end if;
+
+  perform public.acknowledge_dispatch_signal(signal.id, worker_id);
+  if (select status from public.dispatch_signals where id = signal.id)
+     <> 'acknowledged' then
+    raise exception 'dispatch signal was not acknowledged';
+  end if;
+
+  insert into public.artifacts (
+    workspace_id, work_item_id, created_by, name, artifact_version,
+    uri, media_type, sha256, byte_size, data_classification
+  ) values (
+    workspace_id, parent_work.id, worker_id, 'report.json', 1,
+    'storage://runtime-smoke/report.json', 'application/json',
+    repeat('a', 64), 128, 'internal'
+  );
+
+  update public.agent_runtime_bindings
+  set last_seen_at = now() - interval '1 hour'
+  where id = binding.id;
+  perform public.run_worker_watchdog();
+  if (select status from public.agent_runtime_bindings where id = binding.id)
+     <> 'offline' then
+    raise exception 'watchdog did not offline the stale runtime';
+  end if;
+
+  if not exists (
+    select 1 from cron.job where jobname = 'ventureos-worker-watchdog'
+  ) then
+    raise exception 'worker watchdog schedule was not created';
   end if;
 end;
 $$;

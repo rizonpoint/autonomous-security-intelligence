@@ -188,6 +188,63 @@ class AdminTaskProfileCreate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class WorkerEnvironment(BaseModel):
+    id: UUID
+    organization_id: UUID
+    venture_id: UUID | None = None
+    workspace_id: UUID
+    slug: str
+    name: str
+    provider: str
+    runtime_type: str
+    isolation_level: str
+    attestation_state: str
+    expected_poll_interval_seconds: int
+    missed_poll_threshold: int
+    status: str
+    metadata: dict[str, Any]
+
+
+class AdminWorkerEnvironmentCreate(BaseModel):
+    workspace_id: UUID
+    slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=120)
+    name: str = Field(min_length=1, max_length=160)
+    provider: str = Field(min_length=1, max_length=80)
+    runtime_type: Literal[
+        "grok_bot", "hosted_worker", "persistent_worker", "managed_microvm", "dedicated_host"
+    ]
+    isolation_level: Literal[
+        "shared_account", "dedicated_identity", "microvm", "dedicated_host"
+    ]
+    expected_poll_interval_seconds: int = Field(default=300, ge=30, le=3600)
+    missed_poll_threshold: int = Field(default=3, ge=1, le=20)
+    network_policy: dict[str, Any] = Field(default_factory=dict)
+    tool_policy: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeHeartbeat(BaseModel):
+    environment_id: UUID
+    runtime_instance_id: UUID
+    runtime_version: str | None = Field(default=None, max_length=120)
+    routine_triggered: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactCreate(BaseModel):
+    work_item_id: UUID
+    name: str = Field(min_length=1, max_length=300)
+    artifact_version: int = Field(default=1, ge=1, le=1_000_000)
+    uri: str = Field(min_length=1, max_length=2000)
+    media_type: str | None = Field(default=None, max_length=255)
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
+    byte_size: int | None = Field(default=None, ge=0)
+    data_classification: Literal["public", "internal", "confidential", "restricted"] = "internal"
+    storage_bucket: str | None = Field(default=None, max_length=255)
+    storage_path: str | None = Field(default=None, max_length=2000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class WorkItemCreate(BaseModel):
     work_type: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=300)
