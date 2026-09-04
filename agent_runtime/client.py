@@ -6,7 +6,7 @@ import stat
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -103,6 +103,47 @@ class ControlPlaneClient:
 
     def me(self) -> dict[str, Any]:
         return self._request("GET", "/v1/me")
+
+    def inbox(self, unread_only: bool = True, limit: int = 100) -> list[dict[str, Any]]:
+        query = urlencode({
+            "unread_only": str(unread_only).lower(),
+            "limit": limit,
+        })
+        return self._request("GET", f"/v1/messages/inbox?{query}")
+
+    def runtime_heartbeat(
+        self,
+        environment_id: str,
+        runtime_instance_id: str,
+        runtime_version: str = "agent-runtime/0.5.0",
+        routine_triggered: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/runtime/heartbeat",
+            {
+                "environment_id": environment_id,
+                "runtime_instance_id": runtime_instance_id,
+                "runtime_version": runtime_version,
+                "routine_triggered": routine_triggered,
+                "metadata": metadata or {},
+            },
+        )
+
+    def runtime_signals(
+        self,
+        runtime_binding_id: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        query = urlencode({
+            "runtime_binding_id": runtime_binding_id,
+            "limit": limit,
+        })
+        return self._request("GET", f"/v1/runtime/signals?{query}")
+
+    def acknowledge_signal(self, signal_id: int) -> dict[str, Any]:
+        return self._request("POST", f"/v1/runtime/signals/{signal_id}/ack", {})
 
     def create_work_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/v1/work-items", payload)
@@ -205,4 +246,13 @@ class ControlPlaneClient:
                 "risk": risk,
                 "expires_at": expires_at,
             },
+        )
+
+    def create_artifact(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/v1/artifacts", payload)
+
+    def work_artifacts(self, work_item_id: str) -> list[dict[str, Any]]:
+        return self._request(
+            "GET",
+            f"/v1/work-items/{quote(work_item_id)}/artifacts",
         )

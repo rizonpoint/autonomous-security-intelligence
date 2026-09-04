@@ -35,6 +35,12 @@ const VENTURE_STAGES = new Set([
 ]);
 const ENDPOINT_CLASSES = new Set(["hosted", "dedicated", "self_hosted", "bot_runtime"]);
 const DATA_CLASSIFICATIONS = new Set(["public", "internal", "confidential", "restricted"]);
+const RUNTIME_TYPES = new Set([
+  "grok_bot", "hosted_worker", "persistent_worker", "managed_microvm", "dedicated_host",
+]);
+const ISOLATION_LEVELS = new Set([
+  "shared_account", "dedicated_identity", "microvm", "dedicated_host",
+]);
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 type JsonObject = Record<string, unknown>;
@@ -556,6 +562,72 @@ async function listVentureBlueprints(request: Request): Promise<unknown> {
   );
 }
 
+async function createWorkerEnvironment(request: Request): Promise<unknown> {
+  requireAdmin(request);
+  const body = await parseJsonBody(request);
+  const workspaceId = requiredUuid(body.workspace_id, "workspace_id");
+  const runtimeType = requiredString(body, "runtime_type", 80);
+  const isolationLevel = requiredString(body, "isolation_level", 80);
+  if (!RUNTIME_TYPES.has(runtimeType)) throw new HttpError(422, "runtime_type is invalid");
+  if (!ISOLATION_LEVELS.has(isolationLevel)) {
+    throw new HttpError(422, "isolation_level is invalid");
+  }
+  const workspace = one(await databaseRequest(
+    "GET",
+    `/rest/v1/workspaces?${query({
+      id: `eq.${workspaceId}`,
+      select: "id,organization_id,venture_id",
+      limit: "1",
+    })}`,
+  ));
+  if (!workspace) throw new HttpError(404, "workspace not found");
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/worker_environments",
+    {
+      organization_id: workspace.organization_id,
+      venture_id: workspace.venture_id,
+      workspace_id: workspaceId,
+      slug: requiredSlug(body),
+      name: requiredString(body, "name", 160),
+      provider: requiredString(body, "provider", 80),
+      runtime_type: runtimeType,
+      isolation_level: isolationLevel,
+      expected_poll_interval_seconds: boundedInteger(
+        body.expected_poll_interval_seconds,
+        "expected_poll_interval_seconds",
+        30,
+        3600,
+        300,
+      ),
+      missed_poll_threshold: boundedInteger(
+        body.missed_poll_threshold,
+        "missed_poll_threshold",
+        1,
+        20,
+        3,
+      ),
+      network_policy: objectValue(body.network_policy, "network_policy"),
+      tool_policy: objectValue(body.tool_policy, "tool_policy"),
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listWorkerEnvironments(request: Request, url: URL): Promise<unknown> {
+  requireAdmin(request);
+  const params: Record<string, string> = { select: "*", order: "created_at.asc" };
+  const workspaceId = url.searchParams.get("workspace_id");
+  if (workspaceId) {
+    params.workspace_id = `eq.${requiredUuid(workspaceId, "workspace_id")}`;
+  }
+  return await databaseRequest(
+    "GET",
+    `/rest/v1/worker_environments?${query(params)}`,
+  );
+}
+
 async function createModelProvider(request: Request): Promise<unknown> {
   requireAdmin(request);
   const body = await parseJsonBody(request);
@@ -931,6 +1003,117 @@ async function requestApproval(
   return one(result);
 }
 
+async function runtimeHeartbeat(
+  request: Request,
+  agent: AgentIdentity,
+): Promise<unknown> {
+  const body = await parseJsonBody(request);
+  return one(await rpc("heartbeat_agent_runtime", {
+    p_agent_id: agent.id,
+    p_environment_id: requiredUuid(body.environment_id, "environment_id"),
+    p_runtime_instance_id: requiredUuid(body.runtime_instance_id, "runtime_instance_id"),
+    p_runtime_version: optionalString(body.runtime_version, "runtime_version", 120),
+    p_routine_triggered: body.routine_triggered === true,
+    p_metadata: objectValue(body.metadata, "metadata"),
+  }));
+}
+
+async function pullRuntimeSignals(
+  url: URL,
+  agent: AgentIdentity,
+): Promise<unknown> {
+  const bindingId = requiredUuid(
+    url.searchParams.get("runtime_binding_id"),
+    "runtime_binding_id",
+  );
+  const rawLimit = Number(url.searchParams.get("limit") ?? "20");
+  return await rpc("pull_dispatch_signals", {
+    p_runtime_binding_id: bindingId,
+    p_agent_id: agent.id,
+    p_limit: boundedInteger(rawLimit, "limit", 1, 100, 20),
+  });
+}
+
+async function acknowledgeRuntimeSignal(
+  signalId: string,
+  agent: AgentIdentity,
+): Promise<unknown> {
+  if (!/^\d+$/.test(signalId)) throw new HttpError(422, "signal_id must be an integer");
+  return one(await rpc("acknowledge_dispatch_signal", {
+    p_signal_id: Number(signalId),
+    p_agent_id: agent.id,
+  }));
+}
+
+async function createArtifactManifest(
+  request: Request,
+  agent: AgentIdentity,
+): Promise<unknown> {
+  const body = await parseJsonBody(request);
+  const workItemId = requiredUuid(body.work_item_id, "work_item_id");
+  await getWorkItem(workItemId, agent);
+  const classification = typeof body.data_classification === "string"
+    ? body.data_classification
+    : "internal";
+  if (!DATA_CLASSIFICATIONS.has(classification)) {
+    throw new HttpError(422, "data_classification is invalid");
+  }
+  const sha256 = optionalString(body.sha256, "sha256", 64);
+  if (sha256 !== null && !/^[0-9a-f]{64}$/i.test(sha256)) {
+    throw new HttpError(422, "sha256 must contain 64 hexadecimal characters");
+  }
+  return one(await databaseRequest(
+    "POST",
+    "/rest/v1/artifacts",
+    {
+      workspace_id: agent.workspace_id,
+      work_item_id: workItemId,
+      created_by: agent.id,
+      name: requiredString(body, "name", 300),
+      artifact_version: boundedInteger(
+        body.artifact_version,
+        "artifact_version",
+        1,
+        1000000,
+        1,
+      ),
+      uri: requiredString(body, "uri", 2000),
+      media_type: optionalString(body.media_type, "media_type", 255),
+      sha256,
+      byte_size: body.byte_size === undefined || body.byte_size === null
+        ? null
+        : boundedInteger(
+          body.byte_size,
+          "byte_size",
+          0,
+          Number.MAX_SAFE_INTEGER,
+          0,
+        ),
+      data_classification: classification,
+      storage_bucket: optionalString(body.storage_bucket, "storage_bucket", 255),
+      storage_path: optionalString(body.storage_path, "storage_path", 2000),
+      metadata: objectValue(body.metadata, "metadata"),
+    },
+    "return=representation",
+  ));
+}
+
+async function listWorkArtifacts(
+  workItemId: string,
+  agent: AgentIdentity,
+): Promise<unknown> {
+  await getWorkItem(workItemId, agent);
+  return await databaseRequest(
+    "GET",
+    `/rest/v1/artifacts?${query({
+      workspace_id: `eq.${agent.workspace_id}`,
+      work_item_id: `eq.${workItemId}`,
+      select: "*",
+      order: "artifact_version.desc,created_at.desc",
+    })}`,
+  );
+}
+
 export async function handleRequest(request: Request): Promise<Response> {
   const id = requestId(request);
   const startedAt = performance.now();
@@ -939,7 +1122,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const path = normalizePath(url.pathname);
 
     if (request.method === "GET" && path === "/health") {
-      return jsonResponse(200, { status: "ok", version: "0.4.0" }, id);
+      return jsonResponse(200, { status: "ok", version: "0.5.0" }, id);
     }
     if (request.method === "POST" && path === "/v1/admin/organizations") {
       return jsonResponse(201, await createOrganization(request), id);
@@ -964,6 +1147,12 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
     if (request.method === "GET" && path === "/v1/admin/venture-blueprints") {
       return jsonResponse(200, await listVentureBlueprints(request), id);
+    }
+    if (request.method === "POST" && path === "/v1/admin/worker-environments") {
+      return jsonResponse(201, await createWorkerEnvironment(request), id);
+    }
+    if (request.method === "GET" && path === "/v1/admin/worker-environments") {
+      return jsonResponse(200, await listWorkerEnvironments(request, url), id);
     }
     if (request.method === "POST" && path === "/v1/admin/model-providers") {
       return jsonResponse(201, await createModelProvider(request), id);
@@ -1000,6 +1189,19 @@ export async function handleRequest(request: Request): Promise<Response> {
     if (request.method === "GET" && path === "/v1/messages/inbox") {
       return jsonResponse(200, await inbox(url, agent), id);
     }
+    if (request.method === "POST" && path === "/v1/runtime/heartbeat") {
+      return jsonResponse(200, await runtimeHeartbeat(request, agent), id);
+    }
+    if (request.method === "GET" && path === "/v1/runtime/signals") {
+      return jsonResponse(200, await pullRuntimeSignals(url, agent), id);
+    }
+    const signalMatch = /^\/v1\/runtime\/signals\/(\d+)\/ack$/.exec(path);
+    if (request.method === "POST" && signalMatch) {
+      return jsonResponse(200, await acknowledgeRuntimeSignal(signalMatch[1], agent), id);
+    }
+    if (request.method === "POST" && path === "/v1/artifacts") {
+      return jsonResponse(201, await createArtifactManifest(request, agent), id);
+    }
     if (request.method === "POST" && path === "/v1/approvals") {
       return jsonResponse(201, await requestApproval(request, agent), id);
     }
@@ -1009,6 +1211,14 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(
         200,
         await getWorkItem(requiredUuid(workMatch[1], "work_item_id"), agent),
+        id,
+      );
+    }
+    const artifactMatch = /^\/v1\/work-items\/([0-9a-f-]+)\/artifacts$/i.exec(path);
+    if (request.method === "GET" && artifactMatch) {
+      return jsonResponse(
+        200,
+        await listWorkArtifacts(requiredUuid(artifactMatch[1], "work_item_id"), agent),
         id,
       );
     }

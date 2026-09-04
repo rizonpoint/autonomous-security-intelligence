@@ -10,7 +10,7 @@ Chief of Staff, Market Intelligence, Prospecting, Sales, Delivery, Customer
 Success, Finance/Ops, Red Team/QA, and future workers one durable place to
 coordinate without sharing chat history or database credentials directly.
 
-## What v0.4 provides
+## What the platform provides
 
 - durable agent registry and capability metadata
 - atomic work queue with ownership, leases, retries, and dead-letter handling
@@ -35,6 +35,10 @@ coordinate without sharing chat history or database credentials directly.
 - provider/model catalogs separated from durable agent identities
 - task profiles, routing policies, candidate snapshots, and eval-linked choices
 - venture budgets with pre-call cost reservation and actual-cost settlement
+- provider-neutral worker environments with explicit trust-zone declarations
+- durable runtime heartbeats, redeliverable wake signals, and watchdog status
+- automatic parent-to-child trace inheritance
+- versioned artifact manifests for agent-to-agent handoffs
 
 ## Architecture
 
@@ -65,11 +69,13 @@ docs/
   control-plane-api.md    gateway setup and endpoint lifecycle
   edge-gateway.md         hosted Edge deployment and verification
   grok-bot-runtime.md     Grok Bot worker setup and shared-computer boundary
+  autonomous-worker-runtime.md  durable polling, trust zones, and watchdogs
 supabase/migrations/
   202609010001_control_plane.sql
   202609010002_frontier_hardening.sql
   20260902004613_add_workspace_isolation.sql
   20260902051157_add_venture_os_foundation.sql
+  20260904190354_add_autonomous_worker_runtime.sql
 supabase/functions/
   control-plane/          deployed Deno/TypeScript gateway adapter
 supabase/tests/
@@ -97,6 +103,10 @@ venture foundation and foreign-key index migrations are recorded, the
 `control-plane` Edge Function is active as version 5 with custom agent
 authentication, the complete SQL smoke suite passes, and the Supabase security
 advisor reports zero findings. Outbound actions remain disabled.
+
+VentureOS v0.5 is staged locally for verification. It adds the autonomous
+worker runtime without changing the custom agent-authentication boundary. It
+has not been deployed to AI OS.
 
 The next milestone runs the first Account Signal Intelligence revenue workflow
 through research, Red Team / QA, and commercial preparation.

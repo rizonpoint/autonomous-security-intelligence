@@ -9,7 +9,9 @@ import pytest
 from agent_runtime.cli import (
     claim_info,
     default_claim_file,
+    default_runtime_file,
     lease_fields,
+    runtime_state,
     sanitized_claim,
     sanitized_work_item,
     write_private_json,
@@ -170,6 +172,44 @@ def test_default_claim_file_is_scoped_to_agent_key() -> None:
     assert default_claim_file("~/.config/asi/agents/market-intelligence.key").name == (
         "market-intelligence.claim.json"
     )
+
+
+def test_runtime_state_is_stable_and_private(tmp_path: Path) -> None:
+    runtime_file = tmp_path / "market-intelligence.runtime.json"
+    _, first = runtime_state(runtime_file)
+    _, second = runtime_state(runtime_file)
+
+    assert first["runtime_instance_id"] == second["runtime_instance_id"]
+    assert oct(runtime_file.stat().st_mode & 0o777) == "0o600"
+    assert default_runtime_file("~/.config/asi/agents/market-intelligence.key").name == (
+        "market-intelligence.runtime.json"
+    )
+
+
+def test_runtime_heartbeat_and_signal_requests_are_scoped() -> None:
+    captured: list[tuple[str, str, object]] = []
+
+    def opener(request, **_: object):
+        body = json.loads(request.data) if request.data else None
+        captured.append((request.method, request.full_url, body))
+        if request.full_url.endswith("/v1/runtime/heartbeat"):
+            return FakeResponse({"id": "binding-1", "status": "online"})
+        if "/v1/runtime/signals?" in request.full_url:
+            return FakeResponse([{"id": 7, "work_item_id": "work-1"}])
+        return FakeResponse({"id": 7, "status": "acknowledged"})
+
+    client = ControlPlaneClient(TEST_KEY, opener=opener)
+    heartbeat = client.runtime_heartbeat("environment-1", "instance-1")
+    signals = client.runtime_signals("binding-1")
+    acknowledged = client.acknowledge_signal(7)
+
+    assert heartbeat["status"] == "online"
+    assert signals[0]["work_item_id"] == "work-1"
+    assert acknowledged["status"] == "acknowledged"
+    assert captured[0][2]["environment_id"] == "environment-1"
+    assert captured[0][2]["runtime_instance_id"] == "instance-1"
+    assert captured[1][0] == "GET"
+    assert captured[2][1].endswith("/v1/runtime/signals/7/ack")
 
 
 def test_claim_info_preserves_spec_but_omits_lease_token() -> None:
